@@ -15,6 +15,8 @@ import (
 	_ "github.com/lib/pq"
 )
 
+func display_window()
+
 func connect() (*sql.DB, error) {
 	bin, err := ioutil.ReadFile("/run/secrets/db-password")
 	if err != nil {
