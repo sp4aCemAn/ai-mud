@@ -1,18 +1,30 @@
 package ui
 
 import (
-  "fmt"
-  "strings"
+	"fmt"
+	"strings"
 
-  tea "github.com/charmbracelet/bubbletea"
-  "github.com/charmbracelet/lipgloss"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 
+type grid struct {
+  chardisp [][]*rune
+  player rune
+  sizex int
+  sizey int
+  viewx int
+  viewY int
+}
 
 
+func (g grid) initGrid(sizex, sizey) *grid {
+  return &newgrid{chardisp = [][]}
+}
 
-type model struct {
+
+type Screen struct {
   termWidth int
   termHeight int
   text string
@@ -20,15 +32,27 @@ type model struct {
 
 }
 
+type Box struct {
+  boxWidth int
+  boxHeight int
+  text string
+  boxStyle lipgloss.Style
 
-func InitalModel() model {
+}
+
+
+
+
+
+func InitalScreen() Screen {
   baseStyle:= lipgloss.NewStyle().
       Border(lipgloss.NormalBorder()).
       BorderBackground(lipgloss.Color("124")).
       Padding(1,1).
       Align(lipgloss.Center)
 
-  return model {
+
+  return Screen {
     text: "Hello world",
     boxStyle: baseStyle,
 
@@ -36,11 +60,12 @@ func InitalModel() model {
 
 }
 
-func (m model) Init() tea.Cmd {
+
+func (m Screen) Init() tea.Cmd {
   return  nil
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Screen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
   switch msg := msg.(type) {
   // key msgs
   case tea.KeyMsg:
@@ -58,7 +83,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 
-func (m model) View() string {
+func (m Screen) View() string {
 
 
   if m.termHeight ==0 {

@@ -7,7 +7,7 @@ import (
 )
 func main() {
 	fmt.Println("Running main...")
-  initalModel := ui.InitalModel()
+  initalModel := ui.InitalScreen()
   p:=tea.NewProgram(initalModel)
   
   if _, err := p.Run(); err != nil {
