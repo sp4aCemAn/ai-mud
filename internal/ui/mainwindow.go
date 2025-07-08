@@ -19,9 +19,9 @@ type grid struct {
 }
 
 
-func (g grid) initGrid(sizex, sizey) *grid {
-  return &newgrid{chardisp = [][]}
-}
+//func (g grid) initGrid(sizex, sizey) *grid {
+  //return &newgrid{chardisp = [][]}
+//}
 
 
 type Screen struct {
