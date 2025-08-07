@@ -22,7 +22,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.1' 
+          go-version: stable 
 
       # Step 3: Run the golangci-lint action
       # This action will automatically find and use your .golangci.yml file.
@@ -31,3 +31,6 @@ jobs:
         with:
           # Use a specific version for reproducible builds
           version: v2.3.1
+
+
+
