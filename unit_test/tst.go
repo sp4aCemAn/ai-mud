@@ -1,7 +1,7 @@
-package unittestgo_test
+package unit_test
 
 import (
-	"ai-mud/ui"
+	ui "github.com/sp4aCemAn/ai-mud/internal/ui"
 	"fmt"
 	"testing"
   "os"
@@ -12,7 +12,7 @@ import (
 
 func TestBasicUi(t *testing.T) {
 	fmt.Println("Running TestBasicUi...")
-  initalModel := ui.InitalModel()
+  initalModel := ui.InitalScreen()
   p:=tea.NewProgram(initalModel)
   
   if _, err := p.Run(); err != nil {
