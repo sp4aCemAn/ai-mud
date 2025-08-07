@@ -15,23 +15,24 @@ linters:
     - stylecheck
 
 # Configuration for specific issues or rules.
+# Please DELETE the entire 'issues:' block from your file and REPLACE it with this one.
 issues:
   max-same-issues: 10
-  # --- THIS SECTION IS NOW CORRECTED ---
+  # The 'exclude:' key marks the beginning of the list of rules.
   exclude:
-    # Rule #1: This is a list item, starting with a hyphen.
-    # It disables 'errcheck' for any file in the 'unit_test/' directory.
-      path: unit_test/.* # Corrected: Use forward slash and the full pattern
-      linters:
-        - errcheck
-
-    # Rule #2: This is a separate list item, with its own hyphen.
-    # It disables 'funlen' for any file in the 'unit_test/' directory.
+    # This hyphen (-) starts the FIRST rule. It must be indented.
+    - description: "Allow long functions in tests"
+      # 'path' and 'linters' are indented further, under the hyphen.
       path: unit_test/.*
       linters:
         - funlen
 
-# Output configuration.
+    # This hyphen (-) starts the SECOND rule.
+    # CRITICAL: It must have the EXACT SAME indentation as the first hyphen.
+    - description: "Don't require error checking in tests"
+      path: unit_test/.*
+      linters:
+        - errcheck# Output configuration.
 output:
   format:
     colored-line: true
