@@ -1,8 +1,8 @@
 version: "2"
+
 run:
   timeout: 5m
 
-# Linter-specific settings and configuration.
 linters:
   enable:
     - gofmt
@@ -14,25 +14,18 @@ linters:
     - gosimple
     - stylecheck
 
-# Configuration for specific issues or rules.
-# Please DELETE the entire 'issues:' block from your file and REPLACE it with this one.
 issues:
   max-same-issues: 10
-  # The 'exclude:' key marks the beginning of the list of rules.
-  exclude:
-    # This hyphen (-) starts the FIRST rule. It must be indented.
-    - description: "Allow long functions in tests"
-      # 'path' and 'linters' are indented further, under the hyphen.
-      path: unit_test/.*
-      linters:
-        - funlen
 
-    # This hyphen (-) starts the SECOND rule.
-    # CRITICAL: It must have the EXACT SAME indentation as the first hyphen.
-    - description: "Don't require error checking in tests"
-      path: unit_test/.*
-      linters:
-        - errcheck# Output configuration.
+exclude:
+  - description: "Allow long functions in tests"
+    path: unit_test/.*
+    linters:
+      - funlen
+  - description: "Don't require error checking in tests"
+    path: unit_test/.*
+    linters:
+      - errcheck
+
 output:
-  format:
-    colored-line: true
+  colored-line: true
