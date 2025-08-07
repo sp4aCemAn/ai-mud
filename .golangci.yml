@@ -1,0 +1,37 @@
+# Options for analysis running.
+version: "2"
+run:
+  # The default timeout is 1m. Set a longer timeout for larger projects.
+  timeout: 5m
+
+# Linter-specific settings and configuration.
+linters:
+  enable:
+    - gofmt
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - ineffassign
+    - gosimple
+    - stylecheck
+
+# Configuration for specific issues or rules.
+issues:
+  max-same-issues: 10
+  # THIS SECTION HAS BEEN UPDATED
+  exclude:
+    - "don't require error checking in tests"
+      path: _test\.go
+      linters:
+        - errcheck
+    - "test functions can be long"
+      path: _test\.go
+      linters:
+        - funlen
+
+# Output configuration.
+output:
+  # THIS SECTION HAS BEEN UPDATED
+  format:
+    colored-line: true
