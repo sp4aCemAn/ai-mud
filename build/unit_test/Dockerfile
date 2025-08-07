@@ -13,15 +13,14 @@ RUN --mount=type=cache,target=/go/pkg/mod/cache \
 COPY . .
 
 RUN --mount=type=cache,target=/go-build \
-    go build -o /bin/server ./cmd/app/server 
+    go build -o /bin/unit_test ./cmd/app/unit_test
 
 # stage 2
 
 FROM scratch
 
-COPY --from=builder /bin/server /server
+COPY --from=builder /bin/unit_test /unit_test
 
 EXPOSE 8080 2222
 
-# start the game master
-CMD [ "/server" ]
+CMD [ "/unit_test" ]

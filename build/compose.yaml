@@ -2,7 +2,8 @@ services:
   gamemaster:
     build:
       context: ..
-      dockerfile: build/gamemaster/Dockerfile
+      dockerfile: build/unit_test/Dockerfile
+
     networks:
       - aimessager
     ports:
