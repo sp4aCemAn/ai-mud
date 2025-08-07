@@ -1,7 +1,5 @@
-# Options for analysis running.
 version: "2"
 run:
-  # The default timeout is 1m. Set a longer timeout for larger projects.
   timeout: 5m
 
 # Linter-specific settings and configuration.
@@ -19,18 +17,21 @@ linters:
 # Configuration for specific issues or rules.
 issues:
   max-same-issues: 10
-  # THIS SECTION HAS BEEN UPDATED
+  # --- THIS SECTION IS NOW CORRECTED ---
   exclude:
-  # ignore unit test stuff 
-      path: unit_test\.*
+    # Rule #1: This is a list item, starting with a hyphen.
+    # It disables 'errcheck' for any file in the 'unit_test/' directory.
+      path: unit_test/.* # Corrected: Use forward slash and the full pattern
       linters:
         - errcheck
-      path: unit_test\.*
+
+    # Rule #2: This is a separate list item, with its own hyphen.
+    # It disables 'funlen' for any file in the 'unit_test/' directory.
+      path: unit_test/.*
       linters:
         - funlen
 
 # Output configuration.
 output:
-  # THIS SECTION HAS BEEN UPDATED
   format:
     colored-line: true
