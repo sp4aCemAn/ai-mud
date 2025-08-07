@@ -17,15 +17,4 @@ linters:
 issues:
   max-same-issues: 10
 
-exclude:
-  - description: "Allow long functions in tests"
-    path: unit_test/.*
-    linters:
-      - funlen
-  - description: "Don't require error checking in tests"
-    path: unit_test/.*
-    linters:
-      - errcheck
 
-output:
-  colored-line: true
