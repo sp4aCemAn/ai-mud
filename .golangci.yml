@@ -21,12 +21,11 @@ issues:
   max-same-issues: 10
   # THIS SECTION HAS BEEN UPDATED
   exclude:
-  #  - "don't require error checking in tests"
-      path: _test\.go
+  # ignore unit test stuff 
+      path: unit_test\.*
       linters:
         - errcheck
-  #  - "test functions can be long"
-      path: _test\.go
+      path: unit_test\.*
       linters:
         - funlen
 
