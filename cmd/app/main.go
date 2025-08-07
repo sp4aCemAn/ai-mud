@@ -1,6 +1,5 @@
 package main
 import (
-	"fmt"
 	"context"
 	
 
@@ -9,6 +8,7 @@ import (
 func main(){
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 
 	<- ctx.Done()
 
