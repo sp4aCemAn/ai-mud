@@ -21,7 +21,6 @@ linters:
     - staticcheck # A huge suite of powerful static analysis checks.
     - unused     # Checks for unused code.
     - ineffassign # Detects ineffectual assignments.
-    - typecheck  # Ensures the code type-checks.
     - gosimple   # Recommends simplifications to your code.
     - stylecheck # A collection of style checks.
 
