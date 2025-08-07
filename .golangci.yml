@@ -1,4 +1,5 @@
 # Options for analysis running.
+version: "2"
 run:
   # The default timeout is 1m. Set a longer timeout for larger projects.
   timeout: 5m
