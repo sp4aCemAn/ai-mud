@@ -14,6 +14,7 @@ COPY . .
 
 RUN --mount=type=cache,target=/go-build \
     go build -o /bin/gamemaster ./cmd/app 
+
 # stage 2
 
 FROM scratch

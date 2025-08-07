@@ -1,6 +1,6 @@
-package main
+package unit_test 
 import (
-	"ai-mud/ui"
+	"github.com/sp4aCemAn/ai-mud/internal/ui"
 	"fmt"
   "os"
 	tea "github.com/charmbracelet/bubbletea"
