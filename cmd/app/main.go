@@ -1,8 +1,15 @@
 package main
 import (
 	"fmt"
+	"context"
+	
+
 )
 
 func main(){
-	fmt.Println("hello world`")	
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	<- ctx.Done()
+
 }
