@@ -4,6 +4,9 @@ import (
 	"context"
 	"log"
 )
+// NOTES: we only ErrorHandler in main loop because that's where we 
+// manage heartbeat, whenever we have an error funnel it to main
+// otherwise we call WarningHandler
 
 // for later 
 type status struct {
@@ -17,13 +20,9 @@ func ErrorHandler(err error, message string, ctx context.Context) {
 	}
 }
 
-// for when we dont want to stop the service when something fails
-// for debug
+// this function is only called when an error occurs 
 func WarningHandler(err error, message string) {
-	if err != nil {
 		log.Panicf("%s: %v", err, message)
-
-	}
 }
 
 // if not healthy do something about it
