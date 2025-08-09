@@ -20,6 +20,15 @@ func ErrorHandler(err error, message string, ctx context.Context) {
 	}
 }
 
+// experiment with this later
+func HandleError(err error,message string, callback func(),ctx context.Context){
+	if err != nil {
+		callback()
+		WarningHandler(err ,message)
+		<- ctx.Done()
+	}
+}
+
 // this function is only called when an error occurs 
 func WarningHandler(err error, message string) {
 		log.Panicf("%s: %v", err, message)
