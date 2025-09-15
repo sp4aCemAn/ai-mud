@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 )
-
 func dosomething(ctx context.Context) {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()

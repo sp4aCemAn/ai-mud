@@ -10,7 +10,7 @@ import (
 
 // for later 
 type status struct {
-healty bool;
+	healty bool;
 }
 
 func ErrorHandler(err error, message string, ctx context.Context) {
@@ -21,7 +21,7 @@ func ErrorHandler(err error, message string, ctx context.Context) {
 }
 
 // experiment with this later
-func HandleError(err error,message string, callback func(),ctx context.Context){
+func HandleError(err error,message string, callback func(), ctx context.Context){
 	if err != nil {
 		callback()
 		WarningHandler(err ,message)

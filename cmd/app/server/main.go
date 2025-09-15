@@ -16,10 +16,10 @@ import (
 // here is an example function on to run in our main function  
 // this is our main loop
 // we should follow this pattern for other services that require to be ran in a separate go routine
+
 func mainloop(ctx context.Context) { // takes context
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
-
 	for { // probebly dont do this 
 		select {
 		case <- ctx.Done(): // ends in function 

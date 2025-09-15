@@ -5,6 +5,7 @@ go 1.24.1
 require (
 	github.com/charmbracelet/bubbletea v1.3.6
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/go-chi/chi/v5 v5.2.3
 )
 
 require (
