@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+	"github.com/sp4aceman/ai-mud/internal/router"
+
 )
 // this is the main file for now this service is structured like this 
 
@@ -22,7 +24,7 @@ func mainloop(ctx context.Context) { // takes context
 	defer ticker.Stop()
 	for { // probebly dont do this 
 		select {
-		case <- ctx.Done(): // ends in function 
+	case <- ctx.Done(): // ends in function 
 			fmt.Printf("stopping task: %v\n", ctx.Err())
 			return
 		case <- ticker.C:
