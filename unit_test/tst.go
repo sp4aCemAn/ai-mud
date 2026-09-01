@@ -1,7 +1,7 @@
 package unit_test
 
 import (
-	ui "github.com/sp4aCemAn/ai-mud/internal/ui"
+	ui "github.com/sp4aceman/ai-mud/internal/ui"
 	"fmt"
 	"testing"
   "os"

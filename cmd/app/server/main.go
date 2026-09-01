@@ -1,46 +1,57 @@
+// ai-mud server entrypoint.
+//
+// The service is composed of long-running components, each run as a
+// goroutine managed by an errgroup:
+//
+//   - SSH compositor (internal/server/ssh): players connect over SSH
+//   - HTTP API (internal/httpapi): web interface + health endpoints
+//   - Game server (internal/game): world state and the game tick loop
+//   - AI harness (TBD): the "game master" that generates/steers the world
+//
+// Any component returning an error cancels the shared context, shutting
+// down the rest. Ctrl-C triggers a graceful shutdown.
 package main
 
 import (
 	"context"
-	"fmt"
-	"time"
-	"github.com/sp4aceman/ai-mud/internal/router"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 
+	"golang.org/x/sync/errgroup"
+
+	"github.com/sp4aceman/ai-mud/internal/game"
+	"github.com/sp4aceman/ai-mud/internal/httpapi"
+	sshserver "github.com/sp4aceman/ai-mud/internal/server/ssh"
 )
-// this is the main file for now this service is structured like this 
-
-// still deciding on how we are structuring this service for right now 
-// we should write components functions to call as go routines in the main function
-// right now i just have this here 
-// we might need to consider writing multiple functions for multiple go routines 
-// for processes that block other processes
-
-// here is an example function on to run in our main function  
-// this is our main loop
-// we should follow this pattern for other services that require to be ran in a separate go routine
-
-func mainloop(ctx context.Context) { // takes context
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
-	for { // probebly dont do this 
-		select {
-	case <- ctx.Done(): // ends in function 
-			fmt.Printf("stopping task: %v\n", ctx.Err())
-			return
-		case <- ticker.C:
-			fmt.Println("server is currently running")
-		}
-	}
-}
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// log to stderr with a simple text format for now
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
-	fmt.Println("starting  server")
-	go mainloop(ctx) // we call it as a go routine
+	// context cancelled on SIGINT/SIGTERM
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	<- ctx.Done()
-	// for testing purposes
-	time.Sleep(50 * time.Millisecond)
+	gameServer := game.NewServer()
+
+	g, ctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		return sshserver.Run(ctx, sshserver.DefaultConfig())
+	})
+	g.Go(func() error {
+		return httpapi.Run(ctx, httpapi.DefaultConfig())
+	})
+	g.Go(func() error {
+		return gameServer.Run(ctx)
+	})
+
+	slog.Info("ai-mud starting")
+	if err := g.Wait(); err != nil {
+		slog.Error("fatal", "err", err)
+		os.Exit(1)
+	}
+	slog.Info("ai-mud stopped cleanly")
 }

@@ -67,8 +67,8 @@ func (m Screen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Screen) View() string {
-	if m.termHeight ==0 {
-		fmt.Print("init...")
+	if m.termHeight == 0 {
+		return "init..."
 	}
 	boxWidth := m.termWidth - 2
 	boxHeight := m.termHeight -2
