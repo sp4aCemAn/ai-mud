@@ -17,29 +17,36 @@ ssh client
 │   wish crypto/ssh handshake                                   │
 │      │                                                        │
 │      ▼                                                        │
-│   teaSession(provider, s)          ← connect sequence         │
+│   teaSession(provider, world, s)   ← connect sequence         │
 │      │  1. auth.Fingerprint(s.PublicKey())                    │
 │      │  2. auth.Identify(provider, fp)   → auth.Identity      │
 │      ▼                                                        │
-│   ui.NewRouter(identity)           ← one tea program/session  │
+│   ui.NewRouter(identity, world)    ← one tea program/session  │
 └───────────────────────────────────────────────────────────────┘
       │
       ▼
 ┌───────────────────────────────────────────────────────────────┐
 │ Screen FSM (internal/ui)                                      │
 │                                                               │
-│   ┌─────────┐  [1] Join World   ┌───────────┐                 │
-│   │ Landing │ ────────────────▶ │ Auth      │ ─┐              │
-│   │         │  [2] New Char     └───────────┘  │              │
-│   │         │ ────────────────▶ ┌───────────┐  │  ┌───────────┐│
-│   └─────────┘   (wizard)        │ Character │ ─┴─▶│ unim-    ││
-│                                 │ wizard    │     │ plemented ││
-│                                 └───────────┘     └───────────┘│
+│   ┌─────────┐  [1] Join World  ┌──────────┐                  │
+│   │ Landing │ ───────────────▶ │ Auth     │ ──┐              │
+│   │         │  [2] New Char    └──────────┘   │              │
+│   │         │ ───────────────▶ ┌───────────┐  ▼              │
+│   └─────────┘   (wizard)       │ Character │ ┌────────────┐  │
+│                                │ wizard    │ │ GameScreen │  │
+│                                └─────┬─────┘ │ (route A)  │  │
+│                                      │       └────────────┘  │
+│                                      ▼                       │
+│                              ┌───────────────┐               │
+│                              │ unimplemented │               │
+│                              └───────────────┘               │
 └───────────────────────────────────────────────────────────────┘
-                                       │ (future: replaced by GameScreen)
-                                       ▼
-                             game.Server.Attach(session)
 ```
+
+Route A (Join World) is live end-to-end: auth → playable game screen.
+Route B (character creation) still dead-ends on `unimplemented` until
+characters persist; when it does, its confirm step becomes a second
+entrance into the GameScreen.
 
 ## 2. Connect sequence — where auth is initialized
 
@@ -48,14 +55,15 @@ ssh client
 1. **Provider is constructed first.** Today: `auth.NewGuestProvider()`.
    This is the single line to change when real auth lands. Nothing
    downstream knows which provider it got.
-2. The bubbletea middleware is given a closure over that provider:
-   `bm.Middleware(func(s ssh.Session) … { return teaSession(provider, s) })`
+2. The bubbletea middleware is given a closure over that provider and
+   the game server:
+   `bm.Middleware(func(s ssh.Session) … { return teaSession(provider, world, s) })`
 3. For every new SSH session, `teaSession` runs the connect sequence:
 
 ```go
 fp := auth.Fingerprint(s.PublicKey())          // "" if no key was offered
 identity, err := auth.Identify(provider, fp)   // lookup → create on miss
-return ui.NewRouter(identity), nil
+return ui.NewRouter(identity, world), nil      // world = *game.Server
 ```
 
 `auth.Identify` (`internal/auth/auth.go`) is the canonical sequence the
@@ -73,16 +81,16 @@ of the template.
 
 ### What changes when auth becomes real
 
-| Today (template) | Real (later) |
-|---|---|
-| `GuestProvider`, any key accepted | A store/db-backed `Provider` |
-| Auth happens inside `teaSession` (post-connect) | wish's `PublicKeyHandler` decides *at handshake* whether the key may connect at all |
-| `data/users.json` | A database |
-| Everyone logs in as `guest` | Key fingerprint → owned account |
+| Today (template)                                | Real (later)                                                                        |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `GuestProvider`, any key accepted               | A store/db-backed `Provider`                                                        |
+| Auth happens inside `teaSession` (post-connect) | wish's `PublicKeyHandler` decides _at handshake_ whether the key may connect at all |
+| `data/users.json`                               | A database                                                                          |
+| Everyone logs in as `guest`                     | Key fingerprint → owned account                                                     |
 
 `teaSession` keeps its role either way: derive fingerprint, resolve
-identity, build the router. Unknown-key *rejection* moves behind the
-SSH layer; unknown-key *registration* stays a game-side flow.
+identity, build the router. Unknown-key _rejection_ moves behind the
+SSH layer; unknown-key _registration_ stays a game-side flow.
 
 ## 3. The screen FSM — how navigation works
 
@@ -105,16 +113,15 @@ screen and the player's `auth.Identity`.
 
 Screens today:
 
-| Screen | File | Role |
-|---|---|---|
-| `Landing` | `landing.go` | ASCII logo, identity header, menu: Join World / New Character / quit |
-| `authScreen` | `authscreen.go` | Narrates the connect-time auth steps, spinner-paced; `isNew` flag switches the copy between "account found" and "creating account" |
-| `charWizard` | `newchar.go` | 3 steps: name (validated) → class → confirm; `y` logs the character and moves on, `n` restarts, `esc` backs out a step (to Landing from step 1) |
-| `unimplemented` | `unimplemented.go` | Holding screen for world entry; `esc` returns to Landing |
+| Screen          | File               | Role                                                                                                                                            |
+| --------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Landing`       | `landing.go`       | ASCII logo, identity header, menu: Join World / New Character / quit                                                                            |
+| `authScreen`    | `authscreen.go`    | Narrates the connect-time auth steps, spinner-paced; `isNew` flag switches the copy between "account found" and "creating account"              |
+| `charWizard`    | `newchar.go`       | 3 steps: name (validated) → class → confirm; `y` logs the character and moves on, `n` restarts, `esc` backs out a step (to Landing from step 1) |
+| `GameScreen`    | `game.go`          | The playable view: world grid with the `@` dot, stats panel, floating windows. Route A's destination                                            |
+| `unimplemented` | `unimplemented.go` | Holding screen (wizard route today); `esc` returns to Landing                                                                                   |
 
-Key conventions: `q`/`ctrl+c` quit from anywhere (router force-quits on
-ctrl+c), `esc` always means "go back one level", direct number keys
-select menu items.
+Key conventions: `ctrl+c` quits from anywhere (router force-quits); `q` quits on menus (deliberately *not* bound in-game — it will become a game key); `esc` always means "go back one level" (in-game: close the floating window); direct number keys select menu items.
 
 ## 4. The handoff to the game
 
@@ -135,7 +142,7 @@ How the GameScreen is wired:
 - **Sync**: the screen polls state every 2s (`stateTick`). That poll keeps the server's `lastSeen` fresh — the tick loop reaps players silent for 30s, which is the stand-in for disconnect detection (idle-but-connected players stay alive because of the poll).
 - **Stats**: the side panel renders name, level, HP and mana via the shared `kit.Bar` — the same bars party frames / enemy info / trade windows will reuse.
 - **Floating windows**: `kit.Panel` + `kit.Overlay` (ANSI-aware compositing via `x/ansi`) draw the inventory as a centered floating window. `i` toggles, `esc` closes; keys don't leak through to movement while a window is open. Every future window (trade, NPC dialog, party) is a new `Panel` content — no new plumbing.
-- **Stats/stats reset**: `Join` is idempotent per fingerprint — reconnecting reuses your body at spawn point; the reaper removes you 30s after your last poll.
+- **Rejoin/reset**: `Join` is idempotent per fingerprint — reconnecting reuses your body at spawn point; the reaper removes you 30s after your last poll.
 
 What's still deferred: rooms/terrain (land gen), character persistence (wizard route), multi-player interaction (sessions aren't broadcast to yet), inventory contents.
 
@@ -145,13 +152,24 @@ What's still deferred: rooms/terrain (land gen), character persistence (wizard r
   `drive()` feeds key presses and resolves transition cmds inline;
   `pump()` is a mini bubbletea runtime that executes every returned cmd
   until the message queue drains (needed for spinner/timer-paced screens
-  — a naive driver silently drops the last transition cmd). Covers: menu
-  routing, the full wizard walk, invalid-name rejection, wizard restart,
-  esc-exit paths, auth-screen progression, landing content.
+  — a naive driver silently drops the last transition cmd). The router
+  is wired to a real in-process `*game.Server` so gameplay is exercised
+  end to end. Covers: menu routing, route A → GameScreen, the full
+  wizard walk, invalid-name rejection, wizard restart, esc-exit paths,
+  landing content, movement (all three key sets), inventory open/close +
+  movement gating through the overlay.
+- **Game logic (`internal/game/player_test.go`)**: idempotent join,
+  movement clamping to world bounds, unknown-player moves, the stale
+  reaper, explicit leave.
+- **UI kit (`internal/ui/kit_test.go`)**: panel/bars, overlay centering,
+  overlay-taller-than-background, and an ANSI-corruption regression test
+  (a colored background spliced through must keep its sequences balanced
+  and its visible width unchanged).
 - **Auth (`internal/auth/auth_test.go`)**: guest sequence, fingerprint
   derivation (nil-safe), JSON store round-trip + idempotent create,
   store-provider lookup-creates-once semantics.
-- **Live smoke (`expect` script, not in repo)**: walks both paths over a
-  real SSH connection on `:2525` — landing render, auth sequence →
-  unimplemented, esc back, wizard incl. name-rejection and class select →
-  unimplemented. Runs against the local binary and the Docker container.
+- **Live smoke (expect script, not in repo)**: walks both paths over a
+  real SSH connection on `:2525` — landing, auth → game screen, a real
+  movement (asserts the new `pos` render), inventory open/close, wizard
+  incl. name-rejection and class select → unimplemented. Runs against
+  the Docker container.

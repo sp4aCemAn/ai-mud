@@ -17,14 +17,16 @@ The primary way players connect. Built on [wish](https://github.com/charmbracele
 
 chi router on `:8081` (temporary — normally `:8080`, which is taken by a local searxng service). Currently only `/healthz`. This will back the web interface and admin/ops endpoints. The chi router (`NewRouter`) is exported so tests can hit it without opening a port.
 
-### 3. Game server — `internal/game` (skeleton)
+### 3. Game server — `internal/game` (first gameplay loop)
 
 Owns all world state and the simulation. Key design decision: **it is transport-agnostic.**
 
-- `game.Session` is the interface any connected client implements (`ID`, `Write`, `Close`) — an SSH connection, a websocket from the web UI, and the AI harness all look identical to the world
-- `Attach`/`Detach` manage the session registry; `Broadcast` fans out to everyone
-- `Run` is the tick loop (500ms default). All world simulation — movement, combat, spawns, AI-generated events — hangs off `Server.tick`
-- World state (rooms, exits, entities, scheduled events) is not designed yet
+- `game.PlayerView` is the narrow interface the UI plays through (`Join`/`State`/`Move`) — implemented by the in-process `*Server` today, swap-able for a networked client or a fake in tests
+- `game.Session` is the interface for *pushed* events (`ID`, `Write`, `Close`) — an SSH connection, a websocket, and the AI harness all look identical to the world (screens don't consume pushed events yet)
+- Players are keyed by SSH key fingerprint ("" = the shared anonymous guest). `Join` is idempotent (reconnect reuses the body); the tick loop **reaps players silent for 30s** — the stand-in for disconnect detection
+- The pre-landgen world is a flat bounded field (`WorldW x WorldH`); `Move` clamps to bounds
+- `Run` is the tick loop (500ms default). All simulation — movement validation today, combat, spawns, AI-generated events later — hangs off `Server.tick`
+- Rooms, exits, entities, and scheduled events are the next phase (world generation)
 
 ### 4. AI harness — `internal/harness` + `configs/harness.yaml` (skeleton)
 
@@ -42,18 +44,23 @@ Design constraint the skeleton sets up: the harness will emit events into the ga
 One OS process, components as goroutines:
 
 - `signal.NotifyContext` turns SIGINT/SIGTERM into context cancellation
-- `errgroup.WithContext` runs the three components; **any component that returns an error cancels the context**, tearing down the others
+- `errgroup.WithContext` runs the four components (SSH, HTTP, game loop, harness); **any component that returns an error cancels the context**, tearing down the others
 - Each server (SSH, HTTP) installs a goroutine that waits on `ctx.Done()` and calls its own graceful `Shutdown` with a 5s timeout; `ListenAndServe` then returns `ErrServerClosed`, which is treated as success
+- The game server is constructed in main and passed into the SSH server — screens play through it via `game.PlayerView`
 
 When adding a component: write `Run(ctx, cfg) error`, add it as another `g.Go(...)` in main.
 
 ## Config
 
-Hardcoded defaults for now (ports `2222`/`8080`, host key path), expressed as `Config` structs with `DefaultConfig()` constructors — ready to be overridden by env vars/flags later.
+Server ports and the host-key path are hardcoded defaults (`Config` structs with `DefaultConfig()` constructors) — currently `:2525` (SSH) and `:8081` (HTTP), temporary until 2222/8080 free up on this machine; ready to be env/flag-overridden later.
+
+The harness is file-configured: `configs/harness.yaml`, path overridable via `$HARNESS_CONFIG`, with `$HARNESS_BASE_URL` / `$HARNESS_MODEL` env overrides (compose uses those to aim the containerized harness at the host's LM Studio via `host.docker.internal`).
 
 ## Layout conventions
 
 - `cmd/` — binaries only; `cmd/app/unit_test` is a scratch playground, not shipped
 - `internal/` — all real code, importable only within this module
-- `build/` — Dockerfiles and compose files (note: `build/compose.yaml` currently points at `unit_test/Dockerfile`)
+- `configs/` — runtime config files; mounted read-only into the container at `/configs`
+- `data/` — local runtime data (JSON user store), gitignored
+- `build/` — Dockerfiles and compose files
 - `unit_test/` — older scratch files kept for reference

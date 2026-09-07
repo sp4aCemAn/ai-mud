@@ -4,7 +4,7 @@ A multiplayer dungeon crawl played over **SSH** (with a web interface planned), 
 
 ## Status
 
-**Early scaffolding — not playable yet.** The service skeleton runs: components start together and shut down cleanly. The SSH compositor now has the first real user loop (landing → auth template → character creation), but there is no world, no persistence, and no gameplay yet.
+**Playable prototype.** The service runs as four long-running components that start together and shut down cleanly. A player can connect over SSH, land on the title screen, join the world (through the templated auth flow), move a character dot around a flat field, and open floating windows (inventory). There is no generated world yet — rooms/terrain and character persistence are the next phases.
 
 | Component      | State                                                              |
 | -------------- | ------------------------------------------------------------------ |
@@ -13,7 +13,7 @@ A multiplayer dungeon crawl played over **SSH** (with a web interface planned), 
 | Gameplay       | First loop — movable dot on a bounded field, HP/level/mana panel, floating inventory window; players keyed by fingerprint |
 | HTTP API       | Skeleton — chi router with `/healthz` only                         |
 | Game server    | Player registry + tick loop + stale reaper; world gen next         |
-| AI harness | Skeleton — config file + OpenAI-compatible client, GM loop TBD |
+| AI harness     | Skeleton — config file + OpenAI-compatible client, GM loop TBD     |
 
 ### Known issues
 
@@ -37,7 +37,7 @@ docker compose up --build
 Then, from another terminal:
 
 ```sh
-ssh localhost -p 2525     # game client (press q to quit)
+ssh localhost -p 2525     # game client (q on menus, ctrl+c anywhere)
 curl localhost:8081/healthz
 ```
 
@@ -53,8 +53,8 @@ cmd/app/unit_test     scratch playground for experiments (not shipped)
 internal/server/ssh   SSH compositor: wish + bubbletea middleware, :2525
 internal/httpapi      web API: chi router, :8081
 internal/auth         templated auth: Identity, Provider seam, JSON user store
-internal/game         world state, tick loop, session registry
-internal/ui           screen router FSM: landing, auth, character wizard
+internal/game         world state, tick loop, player registry (fingerprint-keyed)
+internal/ui           screen router FSM + reusable kit (Panel/Bar/Overlay)
 internal/harness      AI game master: config + OpenAI-compatible client
 internal/util         error handling helpers
 configs/              harness.yaml (LLM endpoint, model, GM persona)
@@ -65,15 +65,15 @@ build/                Dockerfiles + compose files
 
 ```
                  ┌──────────────────────────────┐
- ssh :2222 ─────▶│ SSH compositor (wish)        │──┐
- http :8080 ────▶│ HTTP API (chi)               │  │  Session iface
-                 └──────────────────────────────┘  ├─▶ ┌──────────────────┐
-                 ┌──────────────────────────────┐  │   │ game server      │
- (future) ──────▶│ AI harness "game master"     │──┘   │ tick loop, world │
-                 └──────────────────────────────┘      └──────────────────┘
+ ssh :2525 ─────▶│ SSH compositor (wish)        │──┐  PlayerView (in-proc for now)
+ http :8081 ────▶│ HTTP API (chi)               │  ├─▶ ┌──────────────────┐
+                 └──────────────────────────────┘  │   │ game server      │
+                 ┌──────────────────────────────┐  │   │ tick loop, world │
+ (future) ──────▶│ AI harness "game master"     │──┘   └──────────────────┘
+                 └──────────────────────────────┘
 ```
 
-Every player connection (SSH, web, or the AI acting as game master) attaches to the game server through the same `game.Session` interface, so world logic never depends on the transport.
+Every player connection (SSH, web, or the AI acting as game master) will attach to the game server through the same interfaces (`game.PlayerView` for play, `game.Session` for pushed events — the transport wiring is still in-process). World logic never depends on how a client is connected.
 
 Docs:
 - `docs/architecture.md` — components, process model, config conventions
