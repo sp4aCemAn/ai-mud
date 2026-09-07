@@ -19,8 +19,9 @@ type Config struct {
 	Addr string
 }
 
+// TODO: make ports env/flag configurable — 8081 is temporary (8080 blocked)
 func DefaultConfig() Config {
-	return Config{Addr: "0.0.0.0:8080"}
+	return Config{Addr: "0.0.0.0:8081"}
 }
 
 func NewRouter() http.Handler {

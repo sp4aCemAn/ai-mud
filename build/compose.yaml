@@ -2,13 +2,20 @@ services:
   gamemaster:
     build:
       context: ..
-      dockerfile: build/unit_test/Dockerfile
+      dockerfile: build/gamemaster/Dockerfile
 
+    restart: unless-stopped
+    volumes:
+      - ../configs:/configs:ro   # harness config; container cwd is /
+    environment:
+      # localhost in the container is the container itself; this points the
+      # harness at services running on the Mac host (e.g. LM Studio)
+      - HARNESS_BASE_URL=http://host.docker.internal:1234/v1
     networks:
       - aimessager
     ports:
-      - '8080:8080'
-      - '2222:2222'
+      - '2525:2525'
+      - '8081:8081'
 
 networks:
   aimessager:

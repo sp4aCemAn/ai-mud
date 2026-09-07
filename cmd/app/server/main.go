@@ -22,6 +22,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/sp4aceman/ai-mud/internal/game"
+	"github.com/sp4aceman/ai-mud/internal/harness"
 	"github.com/sp4aceman/ai-mud/internal/httpapi"
 	sshserver "github.com/sp4aceman/ai-mud/internal/server/ssh"
 )
@@ -47,6 +48,14 @@ func main() {
 	g.Go(func() error {
 		return gameServer.Run(ctx)
 	})
+
+	// AI harness — component is skipped (with a warning) when the config
+	// file is missing; it never takes the server down if the LLM is off.
+	if hCfg, err := harness.LoadConfig(harness.ConfigPath()); err != nil {
+		slog.Warn("harness disabled", "err", err)
+	} else {
+		g.Go(func() error { return harness.New(hCfg).Run(ctx) })
+	}
 
 	slog.Info("ai-mud starting")
 	if err := g.Wait(); err != nil {
