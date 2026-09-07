@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/sp4aceman/ai-mud/internal/auth"
+	"github.com/sp4aceman/ai-mud/internal/game"
 )
 
 // ScreenID enumerates the screens in the user loop.
@@ -20,6 +21,7 @@ const (
 	ScreenLanding ScreenID = iota
 	ScreenAuth
 	ScreenNewChar
+	ScreenGame
 	ScreenUnimplemented
 )
 
@@ -33,13 +35,14 @@ func gotoScreen(id ScreenID) tea.Cmd {
 // Router is the top-level model for one SSH session.
 type Router struct {
 	identity auth.Identity
+	pc       game.PlayerView // the world client (nil = UI-only, tests)
 	screen   tea.Model
 	width    int
 	height   int
 }
 
-func NewRouter(id auth.Identity) Router {
-	return Router{identity: id, screen: newLanding(id)}
+func NewRouter(id auth.Identity, pc game.PlayerView) Router {
+	return Router{identity: id, pc: pc, screen: newLanding(id)}
 }
 
 func (r Router) Init() tea.Cmd {
@@ -86,6 +89,8 @@ func (r Router) screenFor(id ScreenID) tea.Model {
 		m = newAuthScreen(r.identity)
 	case ScreenNewChar:
 		m = newCharWizard(r.identity)
+	case ScreenGame:
+		m = newGameScreen(r.pc, r.identity.Fingerprint, r.identity.User.Name)
 	case ScreenUnimplemented:
 		m = newUnimplemented()
 	default:

@@ -11,6 +11,7 @@ The primary way players connect. Built on [wish](https://github.com/charmbracele
 - Listens on `:2525` (temporary — normally `:2222`), host key auto-generated at `.ssh/ai-mud_host_key` on first run
 - Connect sequence (`teaSession`): read the client's public key fingerprint → `auth.Identify` (lookup-or-create through the `auth.Provider` seam) → hand the `auth.Identity` to the screen router
 - Currently uses the `GuestProvider` (everyone is `guest`); real auth will swap in a store-backed provider and add wish's `PublicKeyHandler` — UI code doesn't change
+- The full walkthrough of this flow (screens, transitions, and the future handoff into the game) is in `user-loop.md`
 
 ### 2. HTTP API — `internal/httpapi` (skeleton)
 

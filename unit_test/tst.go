@@ -15,7 +15,7 @@ func TestBasicUi(t *testing.T) {
 
 	fmt.Println("Running TestBasicUi...")
 	identity := auth.Identity{User: auth.User{ID: "guest", Name: "guest"}}
-	initialModel := ui.NewRouter(identity)
+	initialModel := ui.NewRouter(identity, nil)
 	_ = initialModel // set a breakpoint / print views here to poke screens
 
 	t.Log("Test log message.")

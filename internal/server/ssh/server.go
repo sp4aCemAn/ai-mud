@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/sp4aceman/ai-mud/internal/auth"
+	"github.com/sp4aceman/ai-mud/internal/game"
 	"github.com/sp4aceman/ai-mud/internal/ui"
 )
 
@@ -35,7 +36,7 @@ func DefaultConfig() Config {
 
 // Run starts the SSH server and blocks until ctx is cancelled or a
 // fatal error occurs. It shuts down gracefully on ctx cancellation.
-func Run(ctx context.Context, cfg Config) error {
+func Run(ctx context.Context, cfg Config, world *game.Server) error {
 	// TODO: swap for a real provider (SSH PublicKeyHandler + database)
 	// once auth design settles; every client is the same guest for now.
 	provider := auth.NewGuestProvider()
@@ -45,7 +46,7 @@ func Run(ctx context.Context, cfg Config) error {
 		wish.WithHostKeyPath(cfg.HostKeyPath),
 		wish.WithMiddleware(
 			bm.Middleware(func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
-				return teaSession(provider, s)
+				return teaSession(provider, world, s)
 			}),
 			logging.Middleware(),
 		),
@@ -77,8 +78,8 @@ func Run(ctx context.Context, cfg Config) error {
 
 // teaSession runs the connect sequence for one SSH session: derive the
 // key fingerprint, run the (currently templated) auth flow, and hand the
-// resulting identity to the screen router.
-func teaSession(provider auth.Provider, s ssh.Session) (tea.Model, []tea.ProgramOption) {
+// resulting identity plus the world client to the screen router.
+func teaSession(provider auth.Provider, world *game.Server, s ssh.Session) (tea.Model, []tea.ProgramOption) {
 	pty, _, active := s.Pty()
 	if !active {
 		wish.Fatalln(s, "no active terminal, refusing to start")
@@ -97,7 +98,7 @@ func teaSession(provider auth.Provider, s ssh.Session) (tea.Model, []tea.Program
 		"fingerprint", fp,
 		"term", pty.Term)
 
-	return ui.NewRouter(identity), nil
+	return ui.NewRouter(identity, world), nil
 }
 
 // ensure host key directory exists before wish tries to write the key

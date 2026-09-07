@@ -40,7 +40,7 @@ func main() {
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		return sshserver.Run(ctx, sshserver.DefaultConfig())
+		return sshserver.Run(ctx, sshserver.DefaultConfig(), gameServer)
 	})
 	g.Go(func() error {
 		return httpapi.Run(ctx, httpapi.DefaultConfig())

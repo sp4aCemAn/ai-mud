@@ -72,7 +72,7 @@ func (s authScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if s.ticks%10 == 0 && s.step < len(s.steps)-1 {
 			s.step++
 		} else if s.step == len(s.steps)-1 && s.ticks%10 == 0 {
-			return s, gotoScreen(ScreenUnimplemented)
+			return s, gotoScreen(ScreenGame) // route A ends in the world
 		}
 		return s, cmd
 	}

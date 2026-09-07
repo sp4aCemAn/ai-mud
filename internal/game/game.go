@@ -27,6 +27,10 @@ type Server struct {
 	sessions  map[string]Session
 	tickEvery time.Duration
 
+	// players are keyed by fingerprint (the identity for now).
+	playersMu sync.Mutex
+	players   map[string]*Player
+
 	// TODO: world state — rooms, exits, entities, scheduled events.
 	// This is where the AI harness will plug in as the "game master".
 }
@@ -35,6 +39,7 @@ func NewServer() *Server {
 	return &Server{
 		sessions:  make(map[string]Session),
 		tickEvery: 500 * time.Millisecond,
+		players:   make(map[string]*Player),
 	}
 }
 
@@ -87,6 +92,7 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) tick(n int) {
+	s.reapStale(time.Now())
 	// TODO: world simulation goes here (movement, combat, spawns, AI events).
 	_ = n
 }

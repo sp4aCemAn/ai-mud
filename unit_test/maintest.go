@@ -13,7 +13,7 @@ import (
 func main() {
 	fmt.Println("Running main...")
 	identity := auth.Identity{User: auth.User{ID: "guest", Name: "guest"}}
-	initialModel := ui.NewRouter(identity)
+	initialModel := ui.NewRouter(identity, nil)
 	p := tea.NewProgram(initialModel)
 
 	if _, err := p.Run(); err != nil {

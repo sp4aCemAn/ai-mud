@@ -8,15 +8,17 @@ A multiplayer dungeon crawl played over **SSH** (with a web interface planned), 
 
 | Component      | State                                                              |
 | -------------- | ------------------------------------------------------------------ |
-| SSH compositor | Working — wish + bubbletea, screen-router FSM (landing / auth / character creation) |
+| SSH compositor | Working — wish + bubbletea, screen-router FSM (landing / auth / character creation / game) |
 | Auth           | Template — `auth.Provider` seam; guest provider active, SSH-key-as-identity later |
+| Gameplay       | First loop — movable dot on a bounded field, HP/level/mana panel, floating inventory window; players keyed by fingerprint |
 | HTTP API       | Skeleton — chi router with `/healthz` only                         |
-| Game server    | Skeleton — session registry + tick loop, no world state            |
+| Game server    | Player registry + tick loop + stale reaper; world gen next         |
 | AI harness | Skeleton — config file + OpenAI-compatible client, GM loop TBD |
 
 ### Known issues
 
-- SSH sessions are not yet attached to the game server; screens are UI-only, characters are logged but not persisted.
+- Character creation still dead-ends (no persistence); reconnect always joins as the fingerprint identity, overwriting the character.
+- Multi-player awareness: players share the world registry but can't see each other yet (no broadcast to screens).
 
 ## Running it
 
@@ -71,4 +73,8 @@ build/                Dockerfiles + compose files
                  └──────────────────────────────┘      └──────────────────┘
 ```
 
-Every player connection (SSH, web, or the AI acting as game master) attaches to the game server through the same `game.Session` interface, so world logic never depends on the transport. See `docs/architecture.md` for details.
+Every player connection (SSH, web, or the AI acting as game master) attaches to the game server through the same `game.Session` interface, so world logic never depends on the transport.
+
+Docs:
+- `docs/architecture.md` — components, process model, config conventions
+- `docs/user-loop.md` — the connect → auth → character → world flow, and where the next phases plug in
