@@ -1,0 +1,33 @@
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# --- build output ---
+bin/
+dist/
+*.exe
+
+# --- Go ---
+*.test
+*.out
+coverage.*
+vendor/
+
+# --- secrets / local keys ---
+# SSH host keys are auto-generated at repo root on first run — NEVER commit
+.ssh/
+*.pem
+*.key
+.env
+.env.*
+
+# --- editors / IDEs ---
+.vscode/
+.idea/
+*.swp
+*~
+
+# --- logs / scratch ---
+*.log
+debug
