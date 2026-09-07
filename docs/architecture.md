@@ -6,11 +6,11 @@ Target shape of the system, and what exists today.
 
 ### 1. SSH compositor — `internal/server/ssh` (implemented)
 
-The primary way players connect. Built on [wish](https://github.com/charmbracelet/wish), which wraps `crypto/ssh`, with the bubbletea middleware: **every SSH session becomes its own bubbletea program**, so each player gets a live TUI (the same models used for a local terminal app) rendered over their connection.
+The primary way players connect. Built on [wish](https://github.com/charmbracelet/wish), which wraps `crypto/ssh`, with the bubbletea middleware: **every SSH session becomes its own bubbletea program**, so each player gets a live TUI rendered over their connection.
 
 - Listens on `:2525` (temporary — normally `:2222`), host key auto-generated at `.ssh/ai-mud_host_key` on first run
-- `teaHandler` is the seam where a new connection becomes a game client — currently it just returns the placeholder `ui.Screen`; later it will authenticate and attach the session to a player in the game server
-- Incremental rendering middleware can be added later for smoother redraws on slow links
+- Connect sequence (`teaSession`): read the client's public key fingerprint → `auth.Identify` (lookup-or-create through the `auth.Provider` seam) → hand the `auth.Identity` to the screen router
+- Currently uses the `GuestProvider` (everyone is `guest`); real auth will swap in a store-backed provider and add wish's `PublicKeyHandler` — UI code doesn't change
 
 ### 2. HTTP API — `internal/httpapi` (skeleton)
 

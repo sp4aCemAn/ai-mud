@@ -1,0 +1,117 @@
+// Package ui holds the bubbletea screens a player moves through over SSH.
+//
+// Structure: a Router (finite state machine) owns the active screen and
+// delegates Update/View to it. Screens never import each other — they ask
+// for transitions by emitting GotoMsg; only the router knows the map.
+package ui
+
+import (
+	"github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/sp4aceman/ai-mud/internal/auth"
+)
+
+// ScreenID enumerates the screens in the user loop.
+type ScreenID int
+
+const (
+	ScreenLanding ScreenID = iota
+	ScreenAuth
+	ScreenNewChar
+	ScreenUnimplemented
+)
+
+// GotoMsg asks the router to switch to the given screen.
+type GotoMsg struct{ ID ScreenID }
+
+func gotoScreen(id ScreenID) tea.Cmd {
+	return func() tea.Msg { return GotoMsg{ID: id} }
+}
+
+// Router is the top-level model for one SSH session.
+type Router struct {
+	identity auth.Identity
+	screen   tea.Model
+	width    int
+	height   int
+}
+
+func NewRouter(id auth.Identity) Router {
+	return Router{identity: id, screen: newLanding(id)}
+}
+
+func (r Router) Init() tea.Cmd {
+	return r.screen.Init()
+}
+
+func (r Router) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// transitions first — screens emit these, router owns the map.
+	// The new screen's Init must run: that's where cmds like the
+	// spinner's first tick / text cursor blink get scheduled.
+	if got, ok := msg.(GotoMsg); ok {
+		r.screen = r.screenFor(got.ID)
+		return r, r.screen.Init()
+	}
+
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		r.width = msg.Width
+		r.height = msg.Height
+	case tea.KeyMsg:
+		if key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c"))) {
+			return r, tea.Quit
+		}
+	}
+
+	// delegate to the active screen
+	m, cmd := r.screen.Update(msg)
+	r.screen = m
+	return r, cmd
+}
+
+func (r Router) View() string {
+	return r.screen.View()
+}
+
+// screenFor builds a fresh screen. New screens are immediately sized so
+// they render correctly even though the initial WindowSizeMsg has passed.
+func (r Router) screenFor(id ScreenID) tea.Model {
+	var m tea.Model
+	switch id {
+	case ScreenLanding:
+		m = newLanding(r.identity)
+	case ScreenAuth:
+		m = newAuthScreen(r.identity)
+	case ScreenNewChar:
+		m = newCharWizard(r.identity)
+	case ScreenUnimplemented:
+		m = newUnimplemented()
+	default:
+		m = newUnimplemented()
+	}
+	if r.width > 0 {
+		m, _ = m.Update(tea.WindowSizeMsg{Width: r.width, Height: r.height})
+	}
+	return m
+}
+
+// --- shared style helpers ---------------------------------------------------
+
+var boxStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	Padding(1, 3)
+
+// frame centers content in the terminal, wrapped in a rounded box. Before
+// the first resize (width==0) it degrades to bare content.
+func frame(width, height int, content string) string {
+	if width == 0 {
+		return content
+	}
+	return lipgloss.Place(
+		width, height,
+		lipgloss.Center, lipgloss.Center,
+		boxStyle.Render(content),
+	)
+}

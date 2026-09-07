@@ -4,20 +4,19 @@ A multiplayer dungeon crawl played over **SSH** (with a web interface planned), 
 
 ## Status
 
-**Early scaffolding — not playable yet.** The service skeleton runs: three long-running components start together, shut down cleanly, and the SSH compositor renders a placeholder UI. There is no world, no gameplay, and no AI yet.
+**Early scaffolding — not playable yet.** The service skeleton runs: components start together and shut down cleanly. The SSH compositor now has the first real user loop (landing → auth template → character creation), but there is no world, no persistence, and no gameplay yet.
 
 | Component      | State                                                              |
 | -------------- | ------------------------------------------------------------------ |
-| SSH compositor | Working — wish + bubbletea, renders placeholder screen per session |
+| SSH compositor | Working — wish + bubbletea, screen-router FSM (landing / auth / character creation) |
+| Auth           | Template — `auth.Provider` seam; guest provider active, SSH-key-as-identity later |
 | HTTP API       | Skeleton — chi router with `/healthz` only                         |
 | Game server    | Skeleton — session registry + tick loop, no world state            |
 | AI harness | Skeleton — config file + OpenAI-compatible client, GM loop TBD |
 
 ### Known issues
 
-- `internal/ui/window.go` has an unused `"fmt"` import that currently **breaks the build**. Delete line 4 to compile.
-- SSH sessions are not yet wired to the game server; each connection just renders a static screen.
-- `build/compose.yaml` builds `build/unit_test/Dockerfile`, not `build/gamemaster/Dockerfile`.
+- SSH sessions are not yet attached to the game server; screens are UI-only, characters are logged but not persisted.
 
 ## Running it
 
@@ -49,11 +48,14 @@ On first SSH connect the server generates a host key at `.ssh/ai-mud_host_key`. 
 ```
 cmd/app/server        entrypoint — starts all components via errgroup
 cmd/app/unit_test     scratch playground for experiments (not shipped)
-internal/server/ssh   SSH compositor: wish + bubbletea middleware, :2222
-internal/httpapi      web API: chi router, :8080
+internal/server/ssh   SSH compositor: wish + bubbletea middleware, :2525
+internal/httpapi      web API: chi router, :8081
+internal/auth         templated auth: Identity, Provider seam, JSON user store
 internal/game         world state, tick loop, session registry
-internal/ui           bubbletea models rendered over SSH
+internal/ui           screen router FSM: landing, auth, character wizard
+internal/harness      AI game master: config + OpenAI-compatible client
 internal/util         error handling helpers
+configs/              harness.yaml (LLM endpoint, model, GM persona)
 build/                Dockerfiles + compose files
 ```
 

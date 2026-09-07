@@ -68,6 +68,9 @@ func (s *Server) Broadcast(msg []byte) {
 // Run is the main game loop: one tick per tickEvery, driving world
 // simulation, AI events, and scheduled events. Blocks until ctx done.
 func (s *Server) Run(ctx context.Context) error {
+	// TODO(next phase): generate the world here before the tick loop.
+	slog.Info("world generation: not implemented — using empty world")
+
 	ticker := time.NewTicker(s.tickEvery)
 	defer ticker.Stop()
 	tick := 0

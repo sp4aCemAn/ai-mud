@@ -17,6 +17,8 @@ vendor/
 # --- secrets / local keys ---
 # SSH host keys are auto-generated at repo root on first run — NEVER commit
 .ssh/
+# local game data (JSON user store until the database lands)
+data/
 *.pem
 *.key
 .env
