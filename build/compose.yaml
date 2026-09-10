@@ -18,6 +18,8 @@ services:
       # localhost in the container is the container itself; this points the
       # harness at services running on the Mac host (e.g. LM Studio)
       - HARNESS_BASE_URL=http://host.docker.internal:1234/v1
+      # fixed world seed — smoke tests depend on a reproducible map
+      - W_SEED=20260909
     volumes:
       - ../configs:/configs:ro   # harness config; container cwd is /
     networks:
