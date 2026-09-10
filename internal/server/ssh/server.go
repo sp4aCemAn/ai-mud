@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/wish"
 	bm "github.com/charmbracelet/wish/bubbletea"
 	"github.com/charmbracelet/wish/logging"
+	gossh "golang.org/x/crypto/ssh"
 	"log/slog"
 	"net"
 	"os"
@@ -63,11 +64,12 @@ func Run(ctx context.Context, cfg Config, world *game.Server, accts *auth.Accoun
 	// handler still verifies keys that present one. Set post-
 	// construction because charm's ssh derives NoClientAuth only when
 	// NO auth handler exists.
-	// NOTE(perf-bisect): ServerConfigCallback(NoClientAuth) disabled —
-	// suspect it stalls the bubbletea cmd pipeline.
-	// s.ServerConfigCallback = func(ssh.Context) *gossh.ServerConfig {
-	// 	return &gossh.ServerConfig{NoClientAuth: true}
-	// }
+	// keep key-less connections too ("either or": pubkey OR none):
+	// NoClientAuth=true admits anonymous sessions while the pubkey
+	// handler still verifies keys that present one.
+	s.ServerConfigCallback = func(ssh.Context) *gossh.ServerConfig {
+		return &gossh.ServerConfig{NoClientAuth: true}
+	}
 	if err != nil {
 		return err
 	}

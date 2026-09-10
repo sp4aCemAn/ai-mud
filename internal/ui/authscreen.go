@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"log/slog"
-
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -70,7 +68,6 @@ func (s authScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		s.spinner, cmd = s.spinner.Update(msg)
 		s.ticks++
-		slog.Info("auth tick", "ticks", s.ticks, "step", s.step)
 		// ~10 ticks per step keeps the narration readable
 		if s.ticks%10 == 0 && s.step < len(s.steps)-1 {
 			s.step++

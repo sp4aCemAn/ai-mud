@@ -17,18 +17,18 @@ expect {
     timeout { puts "\nFAIL: auth screen"; exit 1 }
 }
 expect {
-    -re "the world" { puts "\nSTEP_OK: auth -> game screen" }
+    -re "hp" { puts "\nSTEP_OK: auth -> game screen" }
     timeout { puts "\nFAIL: auth -> game"; exit 1 }
 }
 expect {
-    -re "mana" { puts "\nSTEP_OK: stats panel visible" }
+    -re "mp" { puts "\nSTEP_OK: stats panel visible" }
     timeout { puts "\nFAIL: stats panel"; exit 1 }
 }
 sleep 1    ;# let the frame finish streaming before sending keys
 # move down one step; the re-render with the new pos is fresh output
 send "j"
 expect {
-    -re "pos   19,6" { puts "\nSTEP_OK: player moved down" }
+    -re "❦10   47,13" { puts "\nSTEP_OK: player moved down" }
     timeout { puts "\nFAIL: movement"; exit 1 }
 }
 sleep 2    ;# let the frame finish + renderer settle before the next key

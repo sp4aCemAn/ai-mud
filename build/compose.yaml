@@ -22,6 +22,9 @@ services:
       - W_SEED=20260909
     volumes:
       - ../configs:/configs:ro   # harness config; container cwd is /
+      # the host key lives in a volume: stable across rebuilds, so
+      # clients' known_hosts stay valid (no stale-key rejections)
+      - hostkey:/.ssh
     networks:
       - aimessager
     ports:
@@ -77,3 +80,4 @@ networks:
 volumes:
   pgdata:
   docdata:
+  hostkey:
