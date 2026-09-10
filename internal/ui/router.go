@@ -6,6 +6,9 @@
 package ui
 
 import (
+	"fmt"
+	"log/slog"
+
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -71,6 +74,7 @@ func (r Router) Init() tea.Cmd {
 }
 
 func (r Router) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	slog.Info("router msg", "kind", fmt.Sprintf("%T", msg), "screen", fmt.Sprintf("%T", r.screen))
 	// transitions first — screens emit these, router owns the map.
 	// The new screen's Init must run: that's where cmds like the
 	// spinner's first tick / text cursor blink get scheduled.
