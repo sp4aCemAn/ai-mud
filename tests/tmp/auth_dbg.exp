@@ -1,0 +1,61 @@
+#!/usr/bin/expect -f
+# wishes auth smoke: create an account (anonymous → wizard), capture the
+# one-time password, quit, log back in with it (name + password), and
+# verify the session lands in the world. Assumes a running server on
+# :2525 (compose pins W_SEED; unused by this script).
+set timeout 30
+set stty_init "rows 30 columns 100"
+log_user 1
+
+# ---------- PATH 1: anonymous New Character → reveal → world ----------
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 authsmoke@127.0.0.1
+expect {
+    "press enter to continue" { sleep 0.4; send "\r" }
+    timeout { puts "\nFAIL: guest gate"; exit 1 }
+}
+expect {
+    "user name" { sleep 0.3; send "\r" }
+    timeout { puts "\nFAIL: guest gate"; exit 1 }
+}
+sleep 0.5
+
+expect {
+    "Join World" { puts "STEP_OK: landing" }
+    timeout { puts "\nFAIL: landing"; exit 1 }
+}
+send "2"
+sleep 0.5
+expect {
+    "what shall we call you" { puts "STEP_OK: name step" }
+    timeout { puts "\nFAIL: name"; exit 1 }
+}
+set acct "Kil[clock seconds]"
+send "$acct\r"
+expect {
+    "choose a class" { puts "STEP_OK: class step" }
+    timeout { puts "\nFAIL: class"; exit 1 }
+}
+send "\r"
+expect {
+    "create this character" { puts "STEP_OK: confirm" }
+    timeout { puts "\nFAIL: confirm"; exit 1 }
+}
+send "y"
+expect {
+    -re {one-time password} { puts "STEP_OK: reveal" }
+    timeout { puts "\nFAIL: reveal"; exit 1 }
+}
+expect {
+    -re {([!#$%&*+,-.:;=?@^]{25})} { set pw $expect_out(1,string); puts "STEP_OK: password captured (len 25)" }
+    timeout { puts "\nFAIL: password capture"; exit 1 }
+}
+send "\r"
+expect {
+    "hp" { puts "STEP_OK: in the world as $acct" }
+    timeout { puts "\nFAIL: game entry"; exit 1 }
+}
+send "\003"
+sleep 0.5
+expect eof
+puts "PATH_CREATE_DONE"
+

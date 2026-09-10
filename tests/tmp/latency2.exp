@@ -1,0 +1,27 @@
+#!/usr/bin/expect -f
+set timeout 12
+set stty_init "rows 30 columns 100"
+log_user 0
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 latprobe3@127.0.0.1
+expect "press enter to continue" { sleep 0.4 }
+send "\r"
+expect "user name" { sleep 0.3 }
+send "\r"
+expect "Join World"
+send "1"
+expect { "hp" {} timeout { puts FAIL_ENTRY; exit 1 } }
+sleep 1
+set t [clock milliseconds]
+send "\ Compilation003"
+expect {
+    -re "warning|again|hold|confirm" { puts "local_render_ms=[expr [clock milliseconds] - $t]" }
+    timeout { puts "local_render_ms=STALLED" }
+}
+sleep 1
+set t2 [clock milliseconds]
+send "\003"
+expect {
+    eof { puts "quit_ms=[expr [clock milliseconds] - $t2]" }
+    timeout { puts "quit_ms=STALLED" }
+}
+puts DONE

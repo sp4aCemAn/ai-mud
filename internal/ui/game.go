@@ -63,6 +63,24 @@ type GameScreen struct {
 
 	width  int
 	height int
+
+	// render cache: the terrain block rebuilds only when the world
+	// version changes, not on every frame (hp bars, dots).
+	terrainCache    string
+	terrainVersion  uint64
+	pendingResizeW  int
+	pendingResizeH  int
+	resizeScheduled bool
+}
+
+// resizeDebounce coalesces streaks of WindowSizeMsgs into one world
+// regen (trailing edge).
+const resizeDebounce = 150 * time.Millisecond
+
+type resizeDoneMsg struct{}
+
+func scheduleResize() tea.Cmd {
+	return tea.Tick(resizeDebounce, func(time.Time) tea.Msg { return resizeDoneMsg{} })
 }
 
 func newGameScreen(id auth.Identity, pc game.PlayerView) GameScreen {
@@ -85,6 +103,7 @@ func newGameScreen(id auth.Identity, pc game.PlayerView) GameScreen {
 		if c, ok := pc.(game.CombatView); ok {
 			g.world = c.WorldView(id.Fingerprint)
 		}
+		g.refreshTerrainCache()
 	}
 	return g
 }
@@ -104,6 +123,8 @@ func (g GameScreen) Init() tea.Cmd { return stateTick() }
 func (g GameScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case stateTickMsg:
+		// keys land a fresh Result themselves; the pull is near-free,
+		// so keep it simple and always refresh
 		if g.pc != nil {
 			if p, ok := g.pc.State(g.fp); ok {
 				g.p = p
@@ -111,17 +132,31 @@ func (g GameScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if c := g.cv(); c != nil {
 				g.world = c.WorldView(g.fp)
 			}
+			g.refreshTerrainCache()
 		}
 		return g, stateTick()
+	case resizeDoneMsg:
+		// trailing edge of the resize streak: one regen per burst
+		g.resizeScheduled = false
+		if g.pc == nil {
+			return g, nil
+		}
+		if c := g.cv(); c != nil {
+			field := innerSize(g.width, g.height)
+			g.apply(c.Resize(g.fp, field.w, field.h))
+			g.refreshTerrainCache()
+		}
+		return g, nil
 	case tea.WindowSizeMsg:
 		g.width = msg.Width
 		g.height = msg.Height
-		if c := g.cv(); c != nil {
-			// the world remakes at the terminal's size — usable field
-			// after the HUD strip is reserved below it
-			field := innerSize(msg.Width, msg.Height)
-			g.apply(c.Resize(g.fp, field.w, field.h))
+		// stash dims; the regen fires once the burst settles
+		g.pendingResizeW, g.pendingResizeH = msg.Width, msg.Height
+		if g.resizeScheduled {
+			return g, nil
 		}
+		g.resizeScheduled = true
+		return g, scheduleResize()
 	case tea.KeyMsg:
 		return g.keyInput(msg)
 	}
@@ -315,7 +350,10 @@ func (g GameScreen) applyIdentity(name string) (tea.Model, tea.Cmd) {
 }
 
 // apply eats a world Result: player, world, overlays, log lines.
-func (g GameScreen) apply(r game.Result) {
+// Pointer receiver: as a value receiver the writes landed in a copy
+// and were thrown away — every keystroke's Result was discarded until
+// the next stateTick re-pulled the server state (the 2s-render bug).
+func (g *GameScreen) apply(r game.Result) {
 	g.p = r.Player
 	g.world = r.World
 	g.fight = r.Fight
@@ -427,9 +465,36 @@ func (g GameScreen) renderVerify() string {
 
 // renderField draws the terrain + dots; @ is the player, x an enemy
 // dot, $ the merchant — plain text so Overlay stays ANSI-correct.
-// Size follows the world snapshot (which the Resize call rebuilds at
-// the terminal's size).
+// The tile block is cached by world version (the player's @ composites
+// on top per frame — positions never hit the cache).
 func (g GameScreen) renderField() string {
+	if g.terrainCache == "" || g.terrainVersion != g.world.Version {
+		return g.buildField() // no cache in this copy — miss is cheap
+	}
+	// composite @ over the cached block (cheap line surgery)
+	lines := strings.Split(g.terrainCache, "\n")
+	if g.p.Y < len(lines) {
+		row := []rune(lines[g.p.Y])
+		if g.p.X < len(row) && g.worldGlyph(g.p.X, g.p.Y) != '@' {
+			row[g.p.X] = '@'
+			lines[g.p.Y] = string(row)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// refreshTerrainCache rebuilds the cached block when the world
+// version moved. Called ONLY from Update paths (never View — bubbletea
+// discards mutations made there).
+func (g *GameScreen) refreshTerrainCache() {
+	if g.terrainCache == "" || g.terrainVersion != g.world.Version {
+		g.terrainCache = g.buildField()
+		g.terrainVersion = g.world.Version
+	}
+}
+
+// buildField builds the version-cached world block (no @).
+func (g GameScreen) buildField() string {
 	h := g.world.H
 	ww := g.world.W
 	if h == 0 {
@@ -445,10 +510,6 @@ func (g GameScreen) renderField() string {
 	var b strings.Builder
 	for y := 0; y < h; y++ {
 		for x := 0; x < ww; x++ {
-			if x == g.p.X && y == g.p.Y {
-				b.WriteString("@")
-				continue
-			}
 			b.WriteRune(g.worldGlyph(x, y))
 		}
 		b.WriteString("\n")

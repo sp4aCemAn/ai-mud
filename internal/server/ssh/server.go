@@ -4,6 +4,7 @@ package sshserver
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/log"
@@ -59,16 +60,25 @@ func Run(ctx context.Context, cfg Config, world *game.Server, accts *auth.Accoun
 	if err != nil {
 		return err
 	}
-	// keep key-less connections too ("either or": pubkey OR none):
-	// NoClientAuth=true admits anonymous sessions while the pubkey
-	// handler still verifies keys that present one. Set post-
-	// construction because charm's ssh derives NoClientAuth only when
-	// NO auth handler exists.
-	// keep key-less connections too ("either or": pubkey OR none):
-	// NoClientAuth=true admits anonymous sessions while the pubkey
-	// handler still verifies keys that present one.
+	// either-or lanes for one negotiated auth sequence: a bare
+	// "none" accept would END the handshake (the client stops before
+	// ever offering a key), so NoClientAuthCallback answers the none
+	// probe with partial success and re-advertises the two real
+	// lanes: publickey (possession is identity) and
+	// keyboard-interactive (press-enter guest).
 	s.ServerConfigCallback = func(ssh.Context) *gossh.ServerConfig {
-		return &gossh.ServerConfig{NoClientAuth: true}
+		return &gossh.ServerConfig{
+			NoClientAuth: true,
+			NoClientAuthCallback: func(gossh.ConnMetadata) (*gossh.Permissions, error) {
+				return nil, &gossh.PartialSuccessError{
+					Next: gossh.ServerAuthCallbacks{
+						PublicKeyCallback:           publicKeyLane,
+						KeyboardInteractiveCallback: guestLane,
+					},
+				}
+			},
+			MaxAuthTries: 10,
+		}
 	}
 	if err != nil {
 		return err
@@ -95,6 +105,37 @@ func Run(ctx context.Context, cfg Config, world *game.Server, accts *auth.Accoun
 	return nil
 }
 
+// charmPubKeyExt is charm's internal permissions key for the
+// authenticated public key (privacy leak in the library's unexported
+// var, so the literal is mirrored here) — wish re-parses it after
+// authentication to make s.PublicKey() work.
+const charmPubKeyExt = "gliderlabs/ssh.PublicKey"
+
+// publicKeyLane is the keyed lane: any key proves identity
+// (possession IS identity; the fingerprint fronts an account).
+// Its permissions carry the marshaled key in charm's extension slot.
+func publicKeyLane(_ gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error) {
+	return &gossh.Permissions{
+		Extensions: map[string]string{
+			charmPubKeyExt: base64.StdEncoding.EncodeToString(key.Marshal()),
+		},
+	}, nil
+}
+
+// guestLane is the keyless lane: one empty reply joins as a guest.
+func guestLane(_ gossh.ConnMetadata, challenger gossh.KeyboardInteractiveChallenge) (*gossh.Permissions, error) {
+	_, err := challenger(
+		"no ssh key offered",
+		"connecting without a key plays as a guest — press enter to continue",
+		[]string{"user name"},
+		[]bool{false},
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &gossh.Permissions{}, nil
+}
+
 // teaSession runs the connect sequence for one SSH session: derive the
 // key fingerprint, resolve (or mint) the account behind it, and hand
 // the identity plus the world client to the screen router.
@@ -118,7 +159,14 @@ func teaSession(accts *auth.Accounts, world *game.Server, s ssh.Session) (tea.Mo
 		"fresh", identity.AccountFresh,
 		"term", pty.Term)
 
-	return ui.NewRouterWithAccounts(identity, world, accts), nil
+	// altscreen + capped FPS: the renderer holds a framebuffer and
+	// only writes changed lines per frame, and the 30fps ceiling
+	// halves the bytes a fast typewriter generates. This is the
+	// keystroke-lag fix, not polish.
+	return ui.NewRouterWithAccounts(identity, world, accts), []tea.ProgramOption{
+		tea.WithAltScreen(),
+		tea.WithFPS(30),
+	}
 }
 
 // ensure host key directory exists before wish tries to write the key

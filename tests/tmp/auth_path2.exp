@@ -1,0 +1,32 @@
+#!/usr/bin/expect -f
+set timeout 30
+set stty_init "rows 30 columns 100"
+log_user 1
+set acct [lindex $argv 0]
+set pw [lindex $argv 1]
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 authsmoke@127.0.0.1
+expect {
+    "Join World" { puts "STEP_OK: landing 2" }
+    timeout { puts "\nFAIL: landing 2"; exit 1 }
+}
+send "3"
+sleep 0.5
+expect {
+    "log in" { puts "STEP_OK: login screen" }
+    timeout { puts "\nFAIL: login screen"; exit 1 }
+}
+send "$acct"
+sleep 0.3
+send "\t"
+send "$pw"
+sleep 0.3
+send "\r"
+expect {
+    "hp" { puts "STEP_OK: logged in to the world" }
+    timeout { puts "\nFAIL: login"; exit 1 }
+}
+send "\003"
+expect eof
+puts "PATH_LOGIN_DONE"
+
+# ---------- PATH 3: an SSH key auto-creates and recalls ----------

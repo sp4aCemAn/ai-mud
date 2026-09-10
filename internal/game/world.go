@@ -32,6 +32,7 @@ const (
 // World is the UI-facing snapshot of the terrain and its dots.
 type World struct {
 	W, H           int // the field is W×H tiles (dynamic; not the consts)
+	Version        uint64
 	Tiles          []string
 	Dots           []Dot
 	SpawnX, SpawnY int

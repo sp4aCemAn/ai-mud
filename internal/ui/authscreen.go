@@ -50,7 +50,9 @@ func newAuthScreen(id auth.Identity) authScreen {
 	return s
 }
 
-func (s authScreen) Init() tea.Cmd { return s.spinner.Tick }
+func (s authScreen) Init() tea.Cmd {
+	return s.spinner.Tick
+}
 
 func (s authScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {

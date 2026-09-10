@@ -53,8 +53,10 @@ func (l loginScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return l, gotoScreen(ScreenLanding)
 		case "tab", "down":
 			l.focusIx = (l.focusIx + 1) % 2
+			l.applyFocus()
 		case "up":
-			l.focusIx = (l.focusIx + 1) % 2 // two fields; same toggle
+			l.focusIx = (l.focusIx + 1) % 2
+			l.applyFocus()
 		case "enter":
 			return l.submit()
 		}
@@ -69,6 +71,19 @@ func (l loginScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return l, cmd
 	}
 	return l, nil
+}
+
+// applyFocus syncs the two inputs' focus state with focusIx —
+// textinput.Update drops keystrokes while blurred, so this is the
+// authority on who receives typing.
+func (l *loginScreen) applyFocus() {
+	if l.focusIx == 1 {
+		l.nameIn.Blur()
+		l.passIn.Focus()
+	} else {
+		l.passIn.Blur()
+		l.nameIn.Focus()
+	}
 }
 
 // submit validates credentials; on success the connection's credential
@@ -100,17 +115,6 @@ func (l loginScreen) View() string {
 	var b strings.Builder
 	b.WriteString("log in\n\n")
 	b.WriteString("welcome back, denizen.\n\n")
-
-	if l.focusIx == 0 {
-		l.nameIn.Focus()
-	} else {
-		l.nameIn.Blur()
-	}
-	if l.focusIx == 1 {
-		l.passIn.Focus()
-	} else {
-		l.passIn.Blur()
-	}
 
 	b.WriteString(l.nameIn.View() + "\n")
 	b.WriteString(l.passIn.View() + "\n")

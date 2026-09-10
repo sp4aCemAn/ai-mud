@@ -32,6 +32,9 @@ type Server struct {
 
 	// state is the world: terrain, dots, fights, stores, event logs.
 	state *worldState
+	// regenCount folds into world seeds so resized worlds stay
+	// reproducible when W_SEED is pinned.
+	regenCount int64
 
 	// players are keyed by fingerprint (the identity for now).
 	playersMu sync.Mutex
@@ -44,7 +47,7 @@ func NewServer() *Server {
 		tickEvery: 500 * time.Millisecond,
 		players:   make(map[string]*Player),
 	}
-	spawnWorld(s, rand.New(rand.NewSource(worldSeed())), WorldW, WorldH)
+	spawnWorld(s, rand.New(rand.NewSource(worldSeed())), WorldW, WorldH, 0)
 	slog.Info("world generated", "size", fmt.Sprintf("%dx%d", WorldW, WorldH),
 		"spawn", fmt.Sprintf("%d,%d", s.state.spawnX, s.state.spawnY),
 		"seed", worldSeed())
@@ -68,7 +71,10 @@ func (s *Server) regenWorld(w, h int) {
 	if s.state != nil {
 		oldW, oldH = s.state.ww, s.state.wh
 	}
-	spawnWorld(s, rand.New(rand.NewSource(time.Now().UnixNano())), ww, wh)
+	// revise the resize counter into the seed: deterministic worlds at
+	// every resize (W_SEED + n) instead of fresh entropy
+	s.regenCount++
+	spawnWorld(s, rand.New(rand.NewSource(worldSeed()+int64(s.regenCount))), ww, wh, uint64(s.regenCount)*1_000_000)
 	n := s.state
 
 	for fp, p := range s.players {
@@ -168,6 +174,7 @@ func (s *Server) tick(n int) {
 			e.X, e.Y = x, y
 			e.HP, e.MaxHP = hp, max
 			e.respawnAt = time.Time{}
+			w.changed()
 			slog.Info("enemy group respawns", "name", e.Name)
 		}
 	}

@@ -1,0 +1,29 @@
+#!/usr/bin/expect -f
+set timeout 10
+set stty_init "rows 30 columns 100"
+log_user 0
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 latprobe2@127.0.0.1
+expect "press enter to continue" { sleep 0.4 }
+send "\r"
+expect "user name" { sleep 0.3 }
+send "\r"
+expect "Join World"
+send "1"
+expect {
+    "hp" {}
+    timeout { puts FAIL_ENTRY; exit 1 }
+}
+sleep 1
+for {set i 1} {$i <= 6} {incr i} {
+    set t [clock milliseconds]
+    send "j\r"
+    expect {
+        -re "❦" {
+            puts "key_to_frame_ms=[expr [clock milliseconds] - $t]"
+        }
+        timeout { puts "key_to_frame_ms=STALLED" }
+    }
+}
+send "\003"
+expect eof
+puts LATENCY_DONE

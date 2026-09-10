@@ -49,6 +49,7 @@ type worldState struct {
 	npcDot      Dot
 	enemies     map[int]*Enemy
 	nextEnemyID int
+	version     uint64              // bumps when the terrain/dot picture changes
 	fights      map[string]*Fight   // fingerprint → open fight
 	shops       map[string]bool     // fingerprint → store open
 	lastEvents  map[string][]string // fingerprint → latest log lines
@@ -56,6 +57,9 @@ type worldState struct {
 	maxGroups   int
 	ticks       int
 }
+
+// changed bumps the render version — call wherever tiles/dots mutate.
+func (w *worldState) changed() { w.version++ }
 
 // setEvent stores the latest line or two per player — the UI shows
 // these as a small log under the field.
@@ -79,7 +83,7 @@ func enemyHP(r *rand.Rand, count, level int) (int, int) {
 
 // spawnWorld generates terrain (at ww×wh) and populates it. Called at
 // server construction and on Resize.
-func spawnWorld(s *Server, r *rand.Rand, ww, wh int) {
+func spawnWorld(s *Server, r *rand.Rand, ww, wh int, genBase uint64) {
 	tiles, sx, sy := genTerrain(r, ww, wh)
 	w := &worldState{
 		ww:        ww,
@@ -93,11 +97,13 @@ func spawnWorld(s *Server, r *rand.Rand, ww, wh int) {
 		shops:     make(map[string]bool),
 		rnd:       r,
 		maxGroups: 4,
+		version:   genBase,
 	}
 	w.npcDot = newMerchant(w, sx, sy)
 	for i := 0; i < w.maxGroups; i++ {
 		w.spawnEnemy()
 	}
+	w.changed()
 
 	s.state = w
 }
@@ -266,6 +272,7 @@ func (s *Server) runFight(fp, action string, w *worldState, p *Player) ([]string
 		p.checkLevel(w.rnd, &events)
 		enemy.respawnAt = time.Now().Add(60 * time.Second)
 		enemy.HP = 0
+		w.changed()
 		delete(w.fights, fp)
 		return res, nil
 	}
@@ -325,11 +332,12 @@ func (p *Player) checkLevel(r *rand.Rand, events *[]string) {
 func (s *Server) worldSnapshot() World {
 	w := s.state
 	out := World{
-		W:      w.ww,
-		H:      w.wh,
-		Tiles:  make([]string, len(w.tiles)),
-		SpawnX: w.spawnX,
-		SpawnY: w.spawnY,
+		W:       w.ww,
+		H:       w.wh,
+		Version: w.version,
+		Tiles:   make([]string, len(w.tiles)),
+		SpawnX:  w.spawnX,
+		SpawnY:  w.spawnY,
 	}
 	copy(out.Tiles, w.tiles)
 	for _, e := range w.enemies {

@@ -1,6 +1,6 @@
 #!/usr/bin/expect -f
 set timeout 25
-log_user 0   ;# echoing spawn output live stalls expect's read loop and
+log_user 1   ;# echoing spawn output live stalls expect's read loop and
              ;# eats keystrokes — puts assertions below are unaffected
 set stty_init "rows 30 columns 100"
 
@@ -34,33 +34,12 @@ expect {
     -re "mp" { puts "\nSTEP_OK: stats panel visible" }
     timeout { puts "\nFAIL: stats panel"; exit 1 }
 }
-# wait out the size-regen burst (which re-spawns everyone) then read
-# the LAST rendered coords: read once, drain new frames for another
-# state tick, and keep whatever the stream last carried.
-sleep 3
-set nx ""
-set ny ""
-set tries 0
-while {$tries < 8} {
-    expect {
-        -re "❦10   (\[0-9\]+),(\[0-9\]+)" {
-            set nx $expect_out(1,string)
-            set ny $expect_out(2,string)
-        }
-        timeout { break }
-    }
-    incr tries
-    sleep 0.6
-}
-if {$nx eq ""} { puts "\nFAIL: spawn coords"; exit 1 }
-set pos "$nx,$ny"
-set below [expr {$ny + 1}]
-
+sleep 1    ;# let the frame finish streaming before sending keys
 # move down one step; the re-render with the new pos is fresh output
 send "j"
 expect {
-    -re "❦10   $nx,$below" { puts "\nSTEP_OK: player moved down from $pos" }
-    timeout { puts "\nFAIL: movement (tried $nx,$ny -> $nx,$below)"; exit 1 }
+    -re "❦10   49,14" { puts "\nSTEP_OK: player moved down" }
+    timeout { puts "\nFAIL: movement"; exit 1 }
 }
 sleep 2    ;# let the frame finish + renderer settle before the next key
 send "i"

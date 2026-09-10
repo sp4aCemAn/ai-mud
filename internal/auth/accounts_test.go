@@ -158,3 +158,43 @@ func TestRenameAccount(t *testing.T) {
 		t.Fatalf("old name should be gone, got %v", err)
 	}
 }
+
+func TestLoginStealsKeyBoundToAnotherAccount(t *testing.T) {
+	a := NewAccounts(nil)
+
+	seed, _, err := a.AutoAccount("ssh", "SHA256:bound-to-seed")
+	if err != nil {
+		t.Fatalf("seed auto-account: %v", err)
+	}
+
+	// a named account created keyless: no key attached yet
+	acc, namedPw, err := a.CreateNamed("kil-named-01")
+	if err != nil {
+		t.Fatalf("CreateNamed: %v", err)
+	}
+
+	// login with the named account's password FROM the device whose
+	// fingerprint is bound to the seed account: the key binding must
+	// move (steal) and the login must succeed
+	got, err := a.Login(acc.Name, namedPw, "ssh", "SHA256:bound-to-seed")
+	if err != nil {
+		t.Fatalf("steal login: %v", err)
+	}
+	if got.Name != acc.Name {
+		t.Fatalf("steal login returned wrong account: %s", got.Name)
+	}
+	if owner, err := a.LookupByCredential("ssh", "SHA256:bound-to-seed"); err != nil || owner.Name != acc.Name {
+		t.Fatalf("fingerprint should now resolve to %s, got %+v err=%v", acc.Name, owner, err)
+	}
+	if holder, err := a.Account(seed.Name); err == nil {
+		for _, c := range holder.Credentials {
+			if c.ID == "SHA256:bound-to-seed" {
+				t.Fatalf("old account still holds the stolen key: %+v", holder.Credentials)
+			}
+		}
+	}
+	holder, err := a.Account(acc.Name)
+	if err != nil || !a.hasCredential(holder, "ssh", "SHA256:bound-to-seed") {
+		t.Fatalf("steal target should hold the key: %+v err=%v", holder, err)
+	}
+}

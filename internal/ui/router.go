@@ -53,10 +53,25 @@ type Router struct {
 	screen   tea.Model
 	width    int
 	height   int
+
+	initCmd tea.Cmd
 }
 
 func NewRouter(id auth.Identity, pc game.PlayerView) Router {
 	return Router{identity: id, accts: auth.NewAccounts(nil), pc: pc, screen: newLanding(id, auth.NewAccounts(nil))}
+}
+
+// NewRouterDirectGame skips landing/auth — straight into the world
+// (perf-diag harness: narrows whether the auth screen stalls the flow).
+func NewRouterDirectGame(id auth.Identity, pc game.PlayerView, accts *auth.Accounts) Router {
+	if accts == nil {
+		accts = auth.NewAccounts(nil)
+	}
+	r := Router{identity: id, accts: accts, pc: pc}
+	sc, scInit := r.screenFor(ScreenLanding)
+	r.screen = sc
+	r.initCmd = scInit
+	return r
 }
 
 func NewRouterWithAccounts(id auth.Identity, pc game.PlayerView, accts *auth.Accounts) Router {
@@ -67,6 +82,9 @@ func NewRouterWithAccounts(id auth.Identity, pc game.PlayerView, accts *auth.Acc
 }
 
 func (r Router) Init() tea.Cmd {
+	if r.initCmd != nil {
+		return r.initCmd
+	}
 	return r.screen.Init()
 }
 
@@ -75,15 +93,17 @@ func (r Router) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// The new screen's Init must run: that's where cmds like the
 	// spinner's first tick / text cursor blink get scheduled.
 	if got, ok := msg.(GotoMsg); ok {
-		r.screen = r.screenFor(got.ID)
-		return r, r.screen.Init()
+		sc, scInit := r.screenFor(got.ID)
+		r.screen = sc
+		return r, scInit
 	}
 
 	// identity swaps re-issue the current screen with upgraded state
 	if got, ok := msg.(identitySwapMsg); ok {
 		r.identity = got.id
-		r.screen = r.screenFor(got.next)
-		return r, r.screen.Init()
+		sc, scInit := r.screenFor(got.next)
+		r.screen = sc
+		return r, scInit
 	}
 
 	switch msg := msg.(type) {
@@ -115,7 +135,7 @@ func (r Router) View() string {
 
 // screenFor builds a fresh screen. New screens are immediately sized so
 // they render correctly even though the initial WindowSizeMsg has passed.
-func (r Router) screenFor(id ScreenID) tea.Model {
+func (r Router) screenFor(id ScreenID) (tea.Model, tea.Cmd) {
 	var m tea.Model
 	switch id {
 	case ScreenLanding:
@@ -133,10 +153,18 @@ func (r Router) screenFor(id ScreenID) tea.Model {
 	default:
 		m = newUnimplemented()
 	}
+
+	init := m.Init()
 	if r.width > 0 {
-		m, _ = m.Update(tea.WindowSizeMsg{Width: r.width, Height: r.height})
+		// prime the size like the first WindowSizeMsg would; the cmd
+		// matters — for GameScreen it schedules the debounced resize
+		var prime tea.Cmd
+		m, prime = m.Update(tea.WindowSizeMsg{Width: r.width, Height: r.height})
+		if prime != nil {
+			init = tea.Batch(init, prime)
+		}
 	}
-	return m
+	return m, init
 }
 
 // --- shared style helpers ---------------------------------------------------

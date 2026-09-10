@@ -10,6 +10,7 @@ the path — nothing is generated.
 | Script | What it drives |
 |---|---|
 | `ui_smoke.exp` | Full 16-step expect smoke against a running server on :2525 — both landing routes (Join World → auth narration → GameScreen, and the New Character wizard end-to-end incl. password reveal), movement (HUD `pos` assert — valid for the seeded world `W_SEED=20260909`), pack open/close. |
+| `auth_smoke.exp` | The auth loop end-to-end: anonymous wizard → account mint → 25-char one-time password reveal (captured from the terminal) → world entry; quit → **log back in with name + captured password**; then a real SSH key connect → auto-account + `Play as <name>` recall. Run with `expect tests/smoke/auth_smoke.exp` (needs the throwaway per-host key at `~/.ssh/mudkey`-style path inside the script). |
 | `probes/*.exp` | Archived one-off capture probes (auth narration, game view, inventory, keyed connect, render timing) — run any of them with `expect tests/smoke/probes/<name>.exp`; they write captures next to themselves in the tmp dir. |
 
 Run it:
@@ -17,9 +18,11 @@ Run it:
     expect tests/smoke/ui_smoke.exp
 
 The world must be reproducible or position asserts break — compose
-pins `W_SEED=20260909` (see `internal/game/game.go` `worldSeed`), and
-the script pins the terminal size (`stty_init rows/cols`), because the
-world now *resizes to the terminal*.
+pins `W_SEED=20260909` (see `internal/game/game.go` `worldSeed`) and
+the script pins the terminal size (`stty_init rows 30 columns 100`):
+the world resizes to the terminal, so the seeded spawn depends on the
+pty too (currently spawn=46,13 · move down → 46,14). The compose
+hostkey volume keeps `known_hosts` valid across rebuilds.
 
 ## Go tests (in-package, committed where the code lives)
 

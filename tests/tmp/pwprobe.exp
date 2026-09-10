@@ -1,0 +1,27 @@
+#!/usr/bin/expect -f
+set timeout 25
+log_user 0
+set stty_init "rows 30 columns 100"
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 pw@127.0.0.1
+expect "press enter to continue" { sleep 0.4 }
+send "\r"
+expect "user name" { sleep 0.3 }
+send "\r"
+expect "Join World"
+send "2"
+expect "what shall we call you"
+send "Kil[clock seconds]\r"
+expect "choose a class"
+send "\r"
+expect "create this character"
+send "y"
+set e 0
+expect {
+    -re {([!#$%&*+,-.:;=?@^]{25})} { puts "PWCAPTURED:<$expect_out(1,string)>"; set e 1 }
+    timeout { puts "PWTIMEOUT" }
+    eof { puts PWEOF }
+}
+sleep 1
+send "\003"
+expect eof
+puts "E=$e"

@@ -1,0 +1,149 @@
+#!/usr/bin/expect -f
+# wishes auth smoke: create an account (anonymous → wizard), capture the
+# one-time password, quit, log back in with it (name + password), and
+# verify the session lands in the world. Assumes a running server on
+# :2525 (compose pins W_SEED; unused by this script).
+set timeout 30
+set stty_init "rows 30 columns 100"
+log_user 0
+
+# ---------- PATH 1: anonymous New Character → reveal → world ----------
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 authsmoke@127.0.0.1
+expect {
+    "press enter to continue" { sleep 0.4; send "\r" }
+    timeout { puts "\nFAIL: guest gate"; exit 1 }
+}
+expect {
+    "user name" { sleep 0.3; send "\r" }
+    timeout { puts "\nFAIL: guest gate"; exit 1 }
+}
+sleep 0.5
+
+expect {
+    "Join World" { puts "STEP_OK: landing" }
+    timeout { puts "\nFAIL: landing"; exit 1 }
+}
+send "2"
+sleep 0.5
+expect {
+    "what shall we call you" { puts "STEP_OK: name step" }
+    timeout { puts "\nFAIL: name"; exit 1 }
+}
+set acct "Kil[clock seconds]"
+send "$acct\r"
+expect {
+    "choose a class" { puts "STEP_OK: class step" }
+    timeout { puts "\nFAIL: class"; exit 1 }
+}
+send "\r"
+expect {
+    "create this character" { puts "STEP_OK: confirm" }
+    timeout { puts "\nFAIL: confirm"; exit 1 }
+}
+send "y"
+expect {
+    -re {one-time password} { puts "STEP_OK: reveal" }
+    timeout { puts "\nFAIL: reveal"; exit 1 }
+}
+expect {
+    -re {([!#$%&*+,-.:;=?@^]{25})} { set pw $expect_out(1,string); puts "STEP_OK: password captured (len 25)" }
+    timeout { puts "\nFAIL: password capture"; exit 1 }
+}
+send "\r"
+expect {
+    "hp" { puts "STEP_OK: in the world as $acct" }
+    timeout { puts "\nFAIL: game entry"; exit 1 }
+}
+send "\003"
+sleep 0.5
+expect eof
+puts "PATH_CREATE_DONE"
+
+# ---------- PATH 2: log back in with name + password ----------
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 authsmoke@127.0.0.1
+expect {
+    "press enter to continue" { sleep 0.4; send "\r" }
+    timeout { puts "\nFAIL: guest gate"; exit 1 }
+}
+expect {
+    "user name" { sleep 0.3; send "\r" }
+    timeout { puts "\nFAIL: guest gate"; exit 1 }
+}
+sleep 0.5
+
+expect {
+    "Join World" { puts "STEP_OK: landing 2" }
+    timeout { puts "\nFAIL: landing 2"; exit 1 }
+}
+send "3"
+sleep 0.5
+expect {
+    "log in" { puts "STEP_OK: login screen" }
+    timeout { puts "\nFAIL: login screen"; exit 1 }
+}
+send "$acct"
+sleep 0.3
+send "\t"
+send "$pw"
+sleep 0.3
+send "\r"
+expect {
+    "hp" { puts "STEP_OK: logged in to the world" }
+    timeout { puts "\nFAIL: login"; exit 1 }
+}
+send "\003"
+expect eof
+puts "PATH_LOGIN_DONE"
+
+log_user 1
+set key /var/folders/kh/fxhk9gs14m5141dzkwcgdlfm0000gn/T/opencode/mudkey
+spawn ssh -tt -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 keygate@127.0.0.1
+expect {
+    -re {connected as ([a-zA-Z0-9-]+)} { set who $expect_out(1,string); puts "STEP_OK: keyed identity $who" }
+    timeout { puts "\nFAIL: keyed landing"; exit 1 }
+}
+expect {
+    -re {Play as ([a-zA-Z0-9-]+)} { puts "STEP_OK: key recalls $expect_out(1,string)" }
+    timeout { puts "\nFAIL: keyed recall"; exit 1 }
+}
+send "\003"
+expect eof
+puts "PATH_KEY_DONE"
+
+# ---------- PATH 4: key steal via password login ----------
+# a keyed device whose fingerprint belongs to another account logs in
+# with a named account's password: the fingerprint binding must MOVE.
+spawn ssh -tt -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 steal@127.0.0.1
+expect {
+    -re {Play as ([a-zA-Z0-9-]+)} { set old $expect_out(1,string); puts "STEP_OK: keyed landing 2 as $old" }
+    timeout { puts "\nFAIL: keyed landing 2"; exit 1 }
+}
+send "3"
+expect {
+    "log in" { puts "STEP_OK: login screen 2" }
+    timeout { puts "\nFAIL: login screen 2"; exit 1 }
+}
+send "$acct"
+sleep 0.3
+send "\t"
+send "$pw"
+sleep 0.3
+send "\r"
+expect {
+    "hp" { puts "STEP_OK: password login pulled the fingerprint" }
+    timeout { puts "\nFAIL: steal login"; exit 1 }
+}
+send "\003"
+sleep 0.5
+expect eof
+
+# final connect with the SAME key: must recall the named account now
+spawn ssh -tt -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 final@127.0.0.1
+expect {
+    -re "Play as $acct" { puts "STEP_OK: fingerprint now recalls $acct" }
+    -re {connected as (grim-[a-z0-9-]+|iron-[a-z0-9-]+|sooty-[a-z0-9-]+|dread-[a-z0-9-]+|hoar-[a-z0-9-]+|splint-[a-z0-9-]+|hollow-[a-z0-9-]+|baleful-[a-z0-9-]+|cinder-[a-z0-9-]+|murk-[a-z0-9-]+)} { puts "\nFAIL: still auto-account $expect_out(1,string)"; exit 1 }
+    timeout { puts "\nFAIL: recall after steal"; exit 1 }
+}
+send "\003"
+expect eof
+puts "PATH_STEAL_DONE"

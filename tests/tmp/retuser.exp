@@ -1,0 +1,44 @@
+#!/usr/bin/expect -f
+set timeout 30
+set stty_init "rows 30 columns 100"
+log_user 1
+set key /var/folders/kh/fxhk9gs14m5141dzkwcgdlfm0000gn/T/opencode/mudkey
+set acct [lindex $argv 0]
+set pw [lindex $argv 1]
+
+# 1) password-login from a KEYED device -> credential attaches
+log_user 0
+spawn ssh -tt -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 ret1@127.0.0.1
+expect { "press enter to continue" { sleep 0.4; send "\r" } timeout { puts FAIL_GATE; exit 1 } }
+expect { "user name" { sleep 0.3; send "\r" } timeout { puts FAIL_LAST_FIELD; exit 1 } }
+expect "Join World"
+log_user 1
+send "3"
+expect { -re "log in" {} timeout { puts FAIL_LOGIN_SCREEN; exit 1 } }
+sleep 0.3
+send "$acct"
+sleep 0.3
+send "\t"
+send "$pw"
+sleep 0.3
+send "\r"
+expect {
+    -re {hp} { puts "\nSTEP_OK: password login on keyed device as $acct" }
+    timeout { puts "\nFAIL: keyed password login"; exit 1 }
+}
+log_user 0
+send "\003"
+expect eof
+
+# 2) next connect with the SAME key -> should recall the NAMED account
+sleep 1
+spawn ssh -tt -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 ret2@127.0.0.1
+expect {
+    -re "$acct" { puts "\nSTEP_OK: key now recalls $acct" }
+    -re {connected as [a-z]+-[a-z]+} { puts "\nFAIL: got auto-account instead of recall"; exit 1 }
+    timeout { puts "\nFAIL: keyed landing"; exit 1 }
+}
+send "\003"
+expect eof
+puts RET_USER_DONE
+# now interpret the world entry after attach from the keyless state instead

@@ -364,13 +364,39 @@ func (d *Document) AttachCredential(ctx context.Context, name string, c Credenti
 		Account string `json:"account"`
 	}
 	err = fetchDoc(ctx, tx, credentialKey(c.Type, c.ID), &idx)
+	oldName := idx.Account
 	switch {
 	case errors.Is(err, ErrNotFound):
 		// unregistered — the attach path's whole purpose
 	case err != nil:
 		return fmt.Errorf("storage: attach credential: %w", err)
+	case oldName == name:
+		// already bound here; the index and account doc are in place
+		return nil
 	default:
-		return ErrConflict // key already belongs to someone
+		// key belongs to another account: a successful password login
+		// is proof of ownership of the NAME, so the binding moves.
+		// strip the credential from the old account first — the index
+		// then upserts below keep the single-owner invariant.
+		var old Account
+		if err := fetchDoc(ctx, tx, accountKey(oldName), &old); err != nil {
+			return fmt.Errorf("storage: attach credential: %w", err)
+		}
+		kept := old.Credentials[:0] // safe: docs are copies
+		for _, oc := range old.Credentials {
+			if oc.Type == c.Type && oc.ID == c.ID {
+				continue
+			}
+			kept = append(kept, oc)
+		}
+		old.Credentials = kept
+		odoc, err := marshalDoc(old)
+		if err != nil {
+			return fmt.Errorf("storage: attach credential: %w", err)
+		}
+		if err := upsertDoc(ctx, tx, accountKey(oldName), odoc); err != nil {
+			return fmt.Errorf("storage: attach credential: %w", err)
+		}
 	}
 
 	var a Account

@@ -1,0 +1,69 @@
+#!/usr/bin/expect -f
+set timeout 30
+set stty_init "rows 30 columns 100"
+log_user 0
+set key /var/folders/kh/fxhk9gs14m5141dzkwcgdlfm0000gn/T/opencode/mudkey
+
+# ---- 1: KEYLESS create: named account + one-time password reveal
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 gw@127.0.0.1
+expect {
+    "press enter to continue" { sleep 0.4; send "\r" } timeout { puts FAIL_GATE; exit 1 }
+}
+expect { "user name" { sleep 0.3 } timeout { puts FAIL_FIELD; exit 1 } }
+send "\r"
+expect "Join World"
+puts M1_LAND
+send "2"
+puts M2_NEWCHAR
+expect { "what shall we call you" {} timeout { puts FAIL_NAME; exit 1 } }
+set acct "Kil[clock seconds]"
+send "$acct\r"
+expect { "choose a class" {} timeout { puts FAIL_CLASS; exit 1 } }
+send "\r"
+expect { "create this character" {} timeout { puts FAIL_CONFIRM; exit 1 } }
+send "y"
+puts M3_CONFIRM
+log_user 1
+expect { -re {one-time password} {} timeout { puts FAIL_REVEAL; exit 1 } }
+expect { -re {([!#$%&*+,-.:;=?@^]{25})} { puts "PWFIRST:<$expect_out(1,string)>"; set pw $expect_out(1,string) } timeout { puts FAIL_PW; exit 1 } }
+log_user 0
+send "\r"
+expect { "hp" {} timeout { puts FAIL_WORLD; exit 1 } }
+puts "STEP_OK: created $acct (pw $pw)"
+send "\003"
+expect eof
+
+# ---- 2: keyed connect -> lands as the auto-account -> "3" log in with
+# ----    the KEYS account: password proof steals the fingerprint over
+spawn ssh -tt -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 retA@127.0.0.1
+expect {
+    "Join World" {}
+    timeout { puts FAIL_KLAND; exit 1 }
+}
+send "3"
+expect { -re "log in" {} timeout { puts FAIL_LOGIN2; exit 1 } }
+sleep 0.3
+send "$acct"
+sleep 0.3
+send "\t"
+sleep 0.3
+send "$pw\r"
+expect {
+    "hp" { puts "STEP_OK: password login on keyed device as $acct — fp steal done" } 
+    timeout { puts FAIL_LOGIN3; exit 1 }
+}
+send "\003"
+expect eof
+
+# ---- 3: connect WITH the same key again: must recall the NAMED account
+#         (not the hollow auto-account it owned before)
+sleep 1
+spawn ssh -tt -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 retB@127.0.0.1
+expect {
+    -re "$acct" { puts "STEP_OK: fingerprint now recalls $acct" }
+    -re {connected as [a-z]+-[a-z]+-\d+} { puts FAIL_AUTOINSTEAD; exit 1 }
+    timeout { puts FAIL_RECALL; exit 1 }
+}
+send "\003"
+expect eof
+puts RET_USER_DONE

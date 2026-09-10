@@ -1,0 +1,21 @@
+#!/usr/bin/expect -f
+set timeout 15
+set stty_init "rows 30 columns 100"
+log_user 1
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 guestprobe@127.0.0.1
+expect "as a guest"
+sleep 0.5
+send "\r"
+expect "user name"
+sleep 0.5
+send "\r"
+sleep 0.5
+expect {
+    -re "as guest" {}
+    -re "Join World" {}
+    timeout { puts TIMEOUT; exit 1 }
+}
+sleep 1
+send "\003"
+expect eof
+exit 0

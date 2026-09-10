@@ -1,0 +1,18 @@
+#!/usr/bin/expect -f
+set timeout 12
+set stty_init "rows 30 columns 100"
+log_user 0
+spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2526 bigprobe@127.0.0.1
+expect { timeout { puts FAIL_CONNECT; exit 1 } }
+sleep 1
+for {set i 1} {$i <= 4} {incr i} {
+    set t [clock milliseconds]
+    send "k"
+    expect {
+        -re {keys=(\d+)} {
+            puts "key_to_frame_ms=[expr [clock milliseconds] - $t]"
+        }
+        timeout { puts key_to_frame_ms=STALLED }
+    }
+}
+puts DONE

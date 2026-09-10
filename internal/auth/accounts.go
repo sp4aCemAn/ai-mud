@@ -319,16 +319,47 @@ func (a *Accounts) AttachCredential(name, credType, fpID string) error {
 func (a *Accounts) attachCredentialLocked(name, credType, fpID string) error {
 
 	if a.DB != nil {
-		return a.DB.AttachCredential(context.Background(), name, storage.Credential{Type: credType, ID: fpID, Added: time.Now().UTC()})
+		if err := a.DB.AttachCredential(context.Background(), name, storage.Credential{Type: credType, ID: fpID, Added: time.Now().UTC()}); err != nil {
+			return err
+		}
+		// keep the memory mirror in sync with the DB steal: the
+		// account that previously owned the fingerprint loses it
+		if oldName, ok := a.memCred[credType+":"+fpID]; ok && oldName != name {
+			a.stripCredentialLocked(oldName, credType, fpID)
+		}
+		a.memCred[credType+":"+fpID] = name
+		return nil
 	}
 	acc, err := a.loadAccount(name)
 	if err != nil {
 		return err
 	}
+	// steal: drop the credential from whoever held it
+	if oldName, ok := a.memCred[credType+":"+fpID]; ok && oldName != name {
+		a.stripCredentialLocked(oldName, credType, fpID)
+	}
 	acc.Credentials = append(acc.Credentials, storage.Credential{Type: credType, ID: fpID, Added: time.Now().UTC()})
 	a.mem[name] = acc
 	a.memCred[credType+":"+fpID] = name
 	return nil
+}
+
+// stripCredentialLocked removes a credential from an account's in-memory
+// doc (steal path); silence on misses — the borrow is authoritative.
+func (a *Accounts) stripCredentialLocked(name, credType, fpID string) {
+	acc, ok := a.mem[name]
+	if !ok {
+		return
+	}
+	kept := acc.Credentials[:0]
+	for _, c := range acc.Credentials {
+		if c.Type == credType && c.ID == fpID {
+			continue
+		}
+		kept = append(kept, c)
+	}
+	acc.Credentials = kept
+	a.mem[name] = acc
 }
 
 // --- auto names ---------------------------------------------------------------

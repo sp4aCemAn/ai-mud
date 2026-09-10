@@ -156,8 +156,9 @@ func TestIntegrationDocument(t *testing.T) {
 	if err != nil || cred.Name != a.Name {
 		t.Fatalf("attached credential lookup: %+v err=%v", cred, err)
 	}
-	if err := d.AttachCredential(ctx, a.Name, Credential{Type: "ssh", ID: "SHA256:laptop2"}); err != ErrConflict {
-		t.Fatalf("conflicting attach should be ErrConflict, got %v", err)
+	// re-attaching to the same owner is idempotent (no-op success)
+	if err := d.AttachCredential(ctx, a.Name, Credential{Type: "ssh", ID: "SHA256:laptop2"}); err != nil {
+		t.Fatalf("same-owner re-attach should be a no-op, got %v", err)
 	}
 
 	// --- rename rekeys account + all indexes ---
@@ -180,6 +181,35 @@ func TestIntegrationDocument(t *testing.T) {
 	if err := d.RenameAccount(ctx, "icy-fir-374", "grim-thistle-91"); err != nil {
 		// free again after the first rename, must succeed
 		t.Fatalf("rename to reclaimed name: %v", err)
+	}
+
+	// --- key steal: a successful password login proves the player owns
+	// the NAME, so the fingerprint binding MOVES: the old account loses
+	// the credential, the index re-points (single-owner invariant held).
+	other := a
+	other.Name = "reap-target-01"
+	other.Credentials = []Credential{}
+	if err := d.CreateAccount(ctx, other); err != nil {
+		t.Fatalf("create steal target: %v", err)
+	}
+	if err := d.AttachCredential(ctx, other.Name, Credential{Type: "ssh", ID: "SHA256:laptop2", Added: time.Now().UTC()}); err != nil {
+		t.Fatalf("steal attach: %v", err)
+	}
+	if owner, err := d.AccountByCredential(ctx, "ssh", "SHA256:laptop2"); err != nil || owner.Name != other.Name {
+		t.Fatalf("steal index re-point: %+v err=%v", owner, err)
+	}
+	stripped, err := d.AccountByName(ctx, "grim-thistle-91")
+	if err != nil {
+		t.Fatalf("fetch stripped account: %v", err)
+	}
+	for _, c := range stripped.Credentials {
+		if c.ID == "SHA256:laptop2" {
+			t.Fatalf("old account still holds the stolen credential: %+v", stripped.Credentials)
+		}
+	}
+	got, err = d.AccountByName(ctx, "reap-target-01")
+	if err != nil || len(got.Credentials) != 1 {
+		t.Fatalf("steal target credentials: %+v err=%v", got, err)
 	}
 }
 
