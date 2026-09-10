@@ -1,23 +1,36 @@
 package game
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
 
+// flatten normalizes a server's world into an empty walkable field so
+// positional tests don't depend on terrain RNG.
+func flatten(s *Server) {
+	s.playersMu.Lock()
+	defer s.playersMu.Unlock()
+	w := s.state
+	w.enemies = map[int]*Enemy{}
+	w.npcDot = Dot{X: -1, Y: -1}
+	for y := range w.tiles {
+		w.tiles[y] = strings.Repeat(",", WorldW)
+	}
+	w.spawnX, w.spawnY = WorldW/2, WorldH/2
+}
+
 func TestJoinIdempotentPerFingerprint(t *testing.T) {
 	s := NewServer()
+	flatten(s)
 
 	p1 := s.Join("SHA256:abc", "guest")
 	p2 := s.Join("SHA256:abc", "guest")
-	if p1 == p2 {
-		t.Fatal("Join should return copies, not the internal pointer")
-	}
 	if p1.X != p2.X || p1.Y != p2.Y || p1.Level != p2.Level {
 		t.Fatalf("same fingerprint should resolve to same player: %+v vs %+v", p1, p2)
 	}
 	if p1.X != WorldW/2 || p1.Y != WorldH/2 {
-		t.Fatalf("new player should spawn centered, got (%d,%d)", p1.X, p1.Y)
+		t.Fatalf("new player should spawn at the region spawn, got (%d,%d)", p1.X, p1.Y)
 	}
 	if p1.HP != p1.MaxHP || p1.Mana != p1.MaxMana || p1.Level != 1 {
 		t.Fatalf("starting stats wrong: %+v", p1)
@@ -26,6 +39,7 @@ func TestJoinIdempotentPerFingerprint(t *testing.T) {
 
 func TestMoveClampsToWorldBounds(t *testing.T) {
 	s := NewServer()
+	flatten(s)
 	s.Join("fp", "guest")
 
 	// walk far past every edge

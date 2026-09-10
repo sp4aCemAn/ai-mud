@@ -13,6 +13,7 @@ A multiplayer dungeon crawl played over **SSH** (with a web interface planned), 
 | Gameplay       | First loop — movable dot on a bounded field, HP/level/mana panel, floating inventory window; players keyed by fingerprint |
 | HTTP API       | Skeleton — chi router with `/healthz` only                         |
 | Game server    | Player registry + tick loop + stale reaper; world gen next         |
+| Storage        | Working — two Postgres containers: relational (AI output) + jsonb document store (accounts) |
 | AI harness     | Skeleton — config file + OpenAI-compatible client, GM loop TBD     |
 
 ### Known issues
@@ -56,6 +57,7 @@ internal/auth         templated auth: Identity, Provider seam, JSON user store
 internal/game         world state, tick loop, player registry (fingerprint-keyed)
 internal/ui           screen router FSM + reusable kit (Panel/Bar/Overlay)
 internal/harness      AI game master: config + OpenAI-compatible client
+internal/storage      two Postgres backends: RelationalStore + DocumentStore
 internal/util         error handling helpers
 configs/              harness.yaml (LLM endpoint, model, GM persona)
 build/                Dockerfiles + compose files

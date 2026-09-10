@@ -39,6 +39,21 @@ The "game master": prompts an LLM to hallucinate/steer the world and track event
 
 Design constraint the skeleton sets up: the harness will emit events into the game server through the same interfaces players use, rather than mutating world state directly.
 
+### 5. Storage — `internal/storage` (wired: main connects before the errgroup)
+
+Two **PostgreSQL** containers, one engine, two data models:
+
+| Backend | Compose service | Model | Holds | Interface |
+|---|---|---|---|---|
+| Relational | `postgres` (:5432) | schema + SQL | AI generation records (`generations` table), world records later | `RelationalStore` — `SaveGeneration` / `RecentGenerations` |
+| Document | `docdb` (:5433) | **jsonb documents** | auth/account docs (`documents` table) — payload changes never need a migration | `DocumentStore` — `SaveUser` / `UserByKey` |
+
+- One engine + one driver (`pgx/v5`) for both: the relational side is classic schema'd data; the document side stores whole documents as `jsonb` keyed by identity (the SSH fingerprint today), upserted via `ON CONFLICT`
+- `storage.Connect` (in main, before other components) retries while containers boot, runs both migrations, and **fails startup if unreachable** — infrastructure that exists must work, unlike optional components such as the harness
+- Consumers program against `RelationalStore`/`DocumentStore`; the AI harness will write generation records via the former, and auth will migrate off the JSON stop-gap onto the latter
+- DSNs: `POSTGRES_DSN` / `DOCUMENT_DSN` env (compose sets service-name hosts; local defaults are `localhost:5432` / `localhost:5433`)
+- Integration tests run against the real containers: `STORAGE_INTEGRATION=1 go test ./internal/storage`
+
 ## Process model — `cmd/app/server/main.go`
 
 One OS process, components as goroutines:

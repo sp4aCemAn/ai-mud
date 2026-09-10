@@ -5,17 +5,73 @@ services:
       dockerfile: build/gamemaster/Dockerfile
 
     restart: unless-stopped
-    volumes:
-      - ../configs:/configs:ro   # harness config; container cwd is /
+    depends_on:
+      postgres:
+        condition: service_healthy
+      docdb:
+        condition: service_healthy
     environment:
+      # the two database containers on the compose network
+      # (service names as hostnames)
+      - POSTGRES_DSN=postgres://aimud:aimud@postgres:5432/aimud?sslmode=disable
+      - DOCUMENT_DSN=postgres://aimud:aimud@docdb:5432/aimud_docs?sslmode=disable
       # localhost in the container is the container itself; this points the
       # harness at services running on the Mac host (e.g. LM Studio)
       - HARNESS_BASE_URL=http://host.docker.internal:1234/v1
+    volumes:
+      - ../configs:/configs:ro   # harness config; container cwd is /
     networks:
       - aimessager
     ports:
       - '2525:2525'
       - '8081:8081'
 
+  # relational database: schema'd data — AI generation records, world
+  # records, event history
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      # dev credentials — fine for a local stack, change before exposing
+      - POSTGRES_USER=aimud
+      - POSTGRES_PASSWORD=aimud
+      - POSTGRES_DB=aimud
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - aimessager
+    ports:
+      - '5432:5432'   # exposed for local dev (psql / integration tests)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aimud -d aimud"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # document database: the same engine used as a jsonb document store —
+  # schema-free user/account documents, no migrations for payload changes
+  docdb:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=aimud
+      - POSTGRES_PASSWORD=aimud
+      - POSTGRES_DB=aimud_docs
+    volumes:
+      - docdata:/var/lib/postgresql/data
+    networks:
+      - aimessager
+    ports:
+      - '5433:5432'   # exposed for local dev — note the host port offset
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aimud -d aimud_docs"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 networks:
   aimessager:
+
+volumes:
+  pgdata:
+  docdata:

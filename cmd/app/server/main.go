@@ -25,6 +25,7 @@ import (
 	"github.com/sp4aceman/ai-mud/internal/harness"
 	"github.com/sp4aceman/ai-mud/internal/httpapi"
 	sshserver "github.com/sp4aceman/ai-mud/internal/server/ssh"
+	"github.com/sp4aceman/ai-mud/internal/storage"
 )
 
 func main() {
@@ -36,6 +37,18 @@ func main() {
 	defer stop()
 
 	gameServer := game.NewServer()
+
+	// storage is infrastructure: with docker compose the healthchecks
+	// start the two postgres containers first, and Connect retries
+	// while they boot.
+	// Failing to connect takes the server down (unlike optional
+	// components such as the harness).
+	store, err := storage.Connect(ctx, storage.ConfigFromEnv())
+	if err != nil {
+		slog.Error("storage unavailable", "err", err)
+		os.Exit(1)
+	}
+	defer store.Close()
 
 	g, ctx := errgroup.WithContext(ctx)
 

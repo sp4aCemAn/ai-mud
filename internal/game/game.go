@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"sync"
 	"time"
 )
@@ -27,20 +28,24 @@ type Server struct {
 	sessions  map[string]Session
 	tickEvery time.Duration
 
+	// state is the world: terrain, dots, fights, stores, event logs.
+	state *worldState
+
 	// players are keyed by fingerprint (the identity for now).
 	playersMu sync.Mutex
 	players   map[string]*Player
-
-	// TODO: world state — rooms, exits, entities, scheduled events.
-	// This is where the AI harness will plug in as the "game master".
 }
 
 func NewServer() *Server {
-	return &Server{
+	s := &Server{
 		sessions:  make(map[string]Session),
 		tickEvery: 500 * time.Millisecond,
 		players:   make(map[string]*Player),
 	}
+	spawnWorld(s, rand.New(rand.NewSource(time.Now().UnixNano())))
+	slog.Info("world generated", "size", fmt.Sprintf("%dx%d", WorldW, WorldH),
+		"spawn", fmt.Sprintf("%d,%d", s.state.spawnX, s.state.spawnY))
+	return s
 }
 
 // Attach registers a connected client with the game server.
@@ -73,9 +78,6 @@ func (s *Server) Broadcast(msg []byte) {
 // Run is the main game loop: one tick per tickEvery, driving world
 // simulation, AI events, and scheduled events. Blocks until ctx done.
 func (s *Server) Run(ctx context.Context) error {
-	// TODO(next phase): generate the world here before the tick loop.
-	slog.Info("world generation: not implemented — using empty world")
-
 	ticker := time.NewTicker(s.tickEvery)
 	defer ticker.Stop()
 	tick := 0
@@ -91,10 +93,37 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
+// tick: slow regeneration, enemy respawns. Callable from tests.
 func (s *Server) tick(n int) {
 	s.reapStale(time.Now())
-	// TODO: world simulation goes here (movement, combat, spawns, AI events).
-	_ = n
+
+	s.playersMu.Lock()
+	defer s.playersMu.Unlock()
+	w := s.state
+	w.ticks++
+
+	// downtime: every 4 s, one HP; every 8 s, one mana.
+	for _, p := range s.players {
+		if w.ticks%8 == 0 && p.Mana < p.MaxMana {
+			p.Mana++
+		}
+		if w.ticks%4 == 0 && p.HP < p.MaxHP {
+			p.HP++
+		}
+	}
+
+	// dead groups find their way back.
+	now := time.Now()
+	for _, e := range w.enemies {
+		if e.HP <= 0 && !e.respawnAt.IsZero() && now.After(e.respawnAt) {
+			x, y := w.randomSpot()
+			hp, max := enemyHP(w.rnd, e.Count, e.Level)
+			e.X, e.Y = x, y
+			e.HP, e.MaxHP = hp, max
+			e.respawnAt = time.Time{}
+			slog.Info("enemy group respawns", "name", e.Name)
+		}
+	}
 }
 
 func (s *Server) String() string {
