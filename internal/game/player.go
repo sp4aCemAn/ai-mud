@@ -162,7 +162,7 @@ func (s *Server) interact(p *Player, dx, dy int) *Player {
 		return p
 	}
 
-	nx, ny := clamp(p.X+dx, 0, WorldW-1), clamp(p.Y+dy, 0, WorldH-1)
+	nx, ny := clamp(p.X+dx, 0, w.ww-1), clamp(p.Y+dy, 0, w.wh-1)
 	if !walkable(w.tiles, nx, ny) {
 		w.setEvent(p.Fingerprint, "the water is dark and deep — no crossing")
 		return p
@@ -218,6 +218,13 @@ func (s *Server) openShopLocked(p *Player) (open bool, _ error) {
 	return open, nil
 }
 
+// Resize implements CombatView: rebuilds the world at the terminal's
+// size and returns the caller's fresh position.
+func (s *Server) Resize(fp string, w, h int) Result {
+	s.regenWorld(w, h)
+	return s.Command(fp, "noop", 0) // cheap fresh snapshot of the new world
+}
+
 // Command implements CombatView's action dispatch.
 func (s *Server) Command(fp string, cmd string, arg int) Result {
 	s.playersMu.Lock()
@@ -231,7 +238,18 @@ func (s *Server) Command(fp string, cmd string, arg int) Result {
 	var events []string
 
 	switch cmd {
-	case "attack", "cast", "flee":
+	case "noop", "attack", "cast", "flee":
+		if cmd == "noop" {
+			r := Result{Player: copyPlayer(p), World: s.worldSnapshot()}
+			if f, open := w.fights[fp]; open {
+				r.Fight = fightCopy(f)
+			}
+			if open, _ := s.openShopLocked(p); open {
+				r.Shop = shopOpen(p)
+			}
+			r.Events = w.lastEvents[fp]
+			return r
+		}
 		events, _ = s.runFight(fp, cmd, w, p)
 	case "buy":
 		events = buy(w, p, arg)

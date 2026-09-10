@@ -21,6 +21,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/sp4aceman/ai-mud/internal/auth"
 	"github.com/sp4aceman/ai-mud/internal/game"
 	"github.com/sp4aceman/ai-mud/internal/harness"
 	"github.com/sp4aceman/ai-mud/internal/httpapi"
@@ -50,10 +51,13 @@ func main() {
 	}
 	defer store.Close()
 
+	// accounts live in the document backend; nil Document → memory mode
+	accts := auth.NewAccounts(store.Document)
+
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		return sshserver.Run(ctx, sshserver.DefaultConfig(), gameServer)
+		return sshserver.Run(ctx, sshserver.DefaultConfig(), gameServer, accts)
 	})
 	g.Go(func() error {
 		return httpapi.Run(ctx, httpapi.DefaultConfig())

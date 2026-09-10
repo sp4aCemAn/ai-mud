@@ -1,0 +1,17 @@
+#!/usr/bin/expect -f
+set timeout 20
+log_file -noappend /var/folders/kh/fxhk9gs14m5141dzkwcgdlfm0000gn/T/opencode/probe_out.txt
+log_user 1
+set stty_init "rows 32 columns 110"
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 scout@127.0.0.1
+expect "the world"
+send "1"
+sleep 2.5
+send "l"
+sleep 1.2
+send "i"
+sleep 1
+send "\033"
+sleep 0.5
+send "\003"
+expect eof

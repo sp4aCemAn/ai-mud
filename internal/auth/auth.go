@@ -31,11 +31,7 @@ type User struct {
 	Keys []string `json:"keys,omitempty"` // "SHA256:..." fingerprints
 }
 
-// Identity is who is connected right now.
-type Identity struct {
-	Fingerprint string // "" when the client authenticated without a key
-	User        User
-}
+// Identity lives in accounts.go (the enriched, account-aware version).
 
 // ErrNotFound is returned by Provider.Lookup when no user has the key.
 var ErrNotFound = errors.New("no user for this key")

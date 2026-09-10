@@ -41,6 +41,7 @@ type Fight struct {
 // worldState is everything the Server owns beyond players. Guarded by
 // the same mutex as the player map.
 type worldState struct {
+	ww, wh      int // world dims (dynamic — Resize regenerates)
 	tiles       []string
 	spawnX      int
 	spawnY      int
@@ -76,22 +77,22 @@ func enemyHP(r *rand.Rand, count, level int) (int, int) {
 	return r.Intn(max/2+1) + max/2, max
 }
 
-// spawnWorld generates terrain and populates it. Called at server
-// construction and never again (the world is persistent; players and
-// enemies cycle through it).
-func spawnWorld(s *Server, r *rand.Rand) {
-	tiles, sx, sy := genTerrain(r)
+// spawnWorld generates terrain (at ww×wh) and populates it. Called at
+// server construction and on Resize.
+func spawnWorld(s *Server, r *rand.Rand, ww, wh int) {
+	tiles, sx, sy := genTerrain(r, ww, wh)
 	w := &worldState{
-		tiles:      tiles,
-		spawnX:     sx,
-		spawnY:     sy,
-		region:     mainRegion(tiles),
-		enemies:    make(map[int]*Enemy),
-		fights:     make(map[string]*Fight),
-		shops:      make(map[string]bool),
-		lastEvents: make(map[string][]string),
-		rnd:        r,
-		maxGroups:  4,
+		ww:        ww,
+		wh:        wh,
+		tiles:     tiles,
+		spawnX:    sx,
+		spawnY:    sy,
+		region:    mainRegion(tiles),
+		enemies:   make(map[int]*Enemy),
+		fights:    make(map[string]*Fight),
+		shops:     make(map[string]bool),
+		rnd:       r,
+		maxGroups: 4,
 	}
 	w.npcDot = newMerchant(w, sx, sy)
 	for i := 0; i < w.maxGroups; i++ {
@@ -187,8 +188,13 @@ type CombatView interface {
 	// Command dispatches everything but movement:
 	//   "attack" | "cast" | "flee" — fight actions
 	//   "buy", arg = shop line index
+	//   "use", arg = pack item (1 potion, 2 draught)
 	//   "close"  — leave the store
 	Command(fp string, cmd string, arg int) Result
+
+	// Resize regenerates the world at the client's terminal size
+	// (WindowSizeMsg only — the world remakes, fights end).
+	Resize(fp string, w, h int) Result
 }
 
 // Result carries everything a UI action might change at once.
@@ -319,6 +325,8 @@ func (p *Player) checkLevel(r *rand.Rand, events *[]string) {
 func (s *Server) worldSnapshot() World {
 	w := s.state
 	out := World{
+		W:      w.ww,
+		H:      w.wh,
 		Tiles:  make([]string, len(w.tiles)),
 		SpawnX: w.spawnX,
 		SpawnY: w.spawnY,

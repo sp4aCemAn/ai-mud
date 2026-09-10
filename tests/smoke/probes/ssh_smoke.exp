@@ -1,0 +1,15 @@
+#!/usr/bin/expect -f
+set timeout 15
+log_user 1
+set stty_init "rows 24 columns 80"
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 testuser@127.0.0.1
+expect {
+    -re "Hello world" { puts "\nSMOKE_OK: TUI rendered" }
+    timeout { puts "\nSMOKE_FAIL: timeout waiting for TUI"; exit 1 }
+    eof { puts "\nSMOKE_FAIL: connection closed early"; exit 1 }
+}
+sleep 1
+send "q"
+sleep 1
+expect eof
+puts "SMOKE_DONE"

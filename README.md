@@ -12,7 +12,7 @@ A multiplayer dungeon crawl played over **SSH** (with a web interface planned), 
 | Auth           | Template — `auth.Provider` seam; guest provider active, SSH-key-as-identity later |
 | Gameplay       | First loop — movable dot on a bounded field, HP/level/mana panel, floating inventory window; players keyed by fingerprint |
 | HTTP API       | Skeleton — chi router with `/healthz` only                         |
-| Game server    | Player registry + tick loop + stale reaper; world gen next         |
+| Game server    | Blurred-noise terrain (water = ' '), turn-based combat, merchant store, XP/coins/levels, regen + enemy respawn |
 | Storage        | Working — two Postgres containers: relational (AI output) + jsonb document store (accounts) |
 | AI harness     | Skeleton — config file + OpenAI-compatible client, GM loop TBD     |
 

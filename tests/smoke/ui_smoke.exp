@@ -1,0 +1,96 @@
+#!/usr/bin/expect -f
+set timeout 25
+log_user 0   ;# echoing spawn output live stalls expect's read loop and
+             ;# eats keystrokes — puts assertions below are unaffected
+set stty_init "rows 30 columns 100"
+
+# ---------- PATH A: Join World -> auth template -> GAME ----------
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 walker@127.0.0.1
+expect {
+    -re "Join World" { puts "\nSTEP_OK: landing rendered" }
+    timeout { puts "\nFAIL: landing"; exit 1 }
+}
+send "1"
+sleep 0.5
+expect {
+    -re "authenticating" { puts "\nSTEP_OK: auth screen" }
+    timeout { puts "\nFAIL: auth screen"; exit 1 }
+}
+expect {
+    -re "the world" { puts "\nSTEP_OK: auth -> game screen" }
+    timeout { puts "\nFAIL: auth -> game"; exit 1 }
+}
+expect {
+    -re "mana" { puts "\nSTEP_OK: stats panel visible" }
+    timeout { puts "\nFAIL: stats panel"; exit 1 }
+}
+sleep 1    ;# let the frame finish streaming before sending keys
+# move down one step; the re-render with the new pos is fresh output
+send "j"
+expect {
+    -re "pos   19,6" { puts "\nSTEP_OK: player moved down" }
+    timeout { puts "\nFAIL: movement"; exit 1 }
+}
+sleep 2    ;# let the frame finish + renderer settle before the next key
+send "i"
+expect {
+    -re "Pack" { puts "\nSTEP_OK: inventory window opened" }
+    timeout { puts "\nFAIL: inventory"; exit 1 }
+}
+expect {
+    -re "nothing yet" { puts "\nSTEP_OK: inventory placeholder content" }
+    timeout { puts "\nFAIL: inventory content"; exit 1 }
+}
+send "\033"
+sleep 0.5
+send "\003"   ;# ctrl+c quits
+expect eof
+puts "PATH_A_DONE"
+
+# ---------- PATH B: New Character wizard ----------
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 walker@127.0.0.1
+expect {
+    -re "Join World" { puts "\nSTEP_OK: landing 2" }
+    timeout { puts "\nFAIL: landing 2"; exit 1 }
+}
+send "2"
+sleep 0.5
+expect {
+    -re "what shall we call you" { puts "\nSTEP_OK: name step" }
+    timeout { puts "\nFAIL: name step"; exit 1 }
+}
+# invalid name -> expect rejection
+send "ab\r"
+expect {
+    -re "names are" { puts "\nSTEP_OK: invalid name rejected" }
+    timeout { puts "\nFAIL: invalid name"; exit 1 }
+}
+# clear field (backspace x2), type valid name, submit
+send "\177\177"
+send "Kit[clock seconds]\r"
+expect {
+    -re "choose a class" { puts "\nSTEP_OK: class step" }
+    timeout { puts "\nFAIL: class step"; exit 1 }
+}
+send "j"     ;# cursor down to Rogue
+expect {
+    -re "Rogue" { puts "\nSTEP_OK: rogue highlighted" }
+    timeout { puts "\nFAIL: rogue highlight"; exit 1 }
+}
+sleep 0.5
+send "\r"
+expect {
+    -re "create this character" { puts "\nSTEP_OK: confirm step" }
+    timeout { puts "\nFAIL: confirm step"; exit 1 }
+}
+# NOTE: the summary's "class: Rogue" precedes "create this character" in
+# the render stream, so it's already consumed from expect's buffer here.
+# The highlight check above + unit tests cover selection correctness.
+send "y"
+expect {
+    -re "one-time password" { puts "\nSTEP_OK: wizard -> reveal" }
+    timeout { puts "\nFAIL: wizard -> reveal"; exit 1 }
+}
+send "q"
+expect eof
+puts "PATH_B_DONE"

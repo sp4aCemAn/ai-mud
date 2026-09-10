@@ -1,0 +1,30 @@
+#!/usr/bin/expect -f
+set timeout 30
+set stty_init "rows 32 columns 110"
+log_user 0
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 t3@127.0.0.1
+expect "the world"
+send "1"
+expect -re "pos"
+sleep 1
+send "j"
+set t0 [clock milliseconds]
+expect {
+    -re "." {
+        set t1 [clock milliseconds]
+        puts "FIRST_BYTE_MS=[expr {$t1-$t0}]"
+        # keep draining for 300ms and measure total bytes
+        set more 0
+        while {1} {
+            expect {
+                -re "." { incr more }
+                timeout { break }
+            }
+        }
+        set t2 [clock milliseconds]
+        puts "TRAIL_MS=[expr {$t2-$t0}] BYTES_BYTES=$more"
+    }
+    timeout { puts "NO_RESPONSE_12s" }
+}
+send "\x03"
+expect eof

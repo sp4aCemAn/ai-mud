@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/wish"
 	bm "github.com/charmbracelet/wish/bubbletea"
 	"github.com/charmbracelet/wish/logging"
+	gossh "golang.org/x/crypto/ssh"
 	"log/slog"
 	"net"
 	"os"
@@ -36,21 +37,36 @@ func DefaultConfig() Config {
 
 // Run starts the SSH server and blocks until ctx is cancelled or a
 // fatal error occurs. It shuts down gracefully on ctx cancellation.
-func Run(ctx context.Context, cfg Config, world *game.Server) error {
-	// TODO: swap for a real provider (SSH PublicKeyHandler + database)
-	// once auth design settles; every client is the same guest for now.
-	provider := auth.NewGuestProvider()
+func Run(ctx context.Context, cfg Config, world *game.Server, accts *auth.Accounts) error {
+	if accts == nil {
+		accts = auth.NewAccounts(nil) // memory mode — dev/hosts without a DB
+	}
 
 	s, err := wish.NewServer(
 		wish.WithAddress(cfg.Addr),
 		wish.WithHostKeyPath(cfg.HostKeyPath),
+		// any public key is accepted — possession IS identity here:
+		// the fingerprint fronts a new account on first sighting.
+		// An allowlist would reject brand-new players.
+		wish.WithPublicKeyAuth(func(ssh.Context, ssh.PublicKey) bool { return true }),
 		wish.WithMiddleware(
 			bm.Middleware(func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
-				return teaSession(provider, world, s)
+				return teaSession(accts, world, s)
 			}),
 			logging.Middleware(),
 		),
 	)
+	if err != nil {
+		return err
+	}
+	// keep key-less connections too ("either or": pubkey OR none):
+	// NoClientAuth=true admits anonymous sessions while the pubkey
+	// handler still verifies keys that present one. Set post-
+	// construction because charm's ssh derives NoClientAuth only when
+	// NO auth handler exists.
+	s.ServerConfigCallback = func(ssh.Context) *gossh.ServerConfig {
+		return &gossh.ServerConfig{NoClientAuth: true}
+	}
 	if err != nil {
 		return err
 	}
@@ -77,9 +93,9 @@ func Run(ctx context.Context, cfg Config, world *game.Server) error {
 }
 
 // teaSession runs the connect sequence for one SSH session: derive the
-// key fingerprint, run the (currently templated) auth flow, and hand the
-// resulting identity plus the world client to the screen router.
-func teaSession(provider auth.Provider, world *game.Server, s ssh.Session) (tea.Model, []tea.ProgramOption) {
+// key fingerprint, resolve (or mint) the account behind it, and hand
+// the identity plus the world client to the screen router.
+func teaSession(accts *auth.Accounts, world *game.Server, s ssh.Session) (tea.Model, []tea.ProgramOption) {
 	pty, _, active := s.Pty()
 	if !active {
 		wish.Fatalln(s, "no active terminal, refusing to start")
@@ -87,7 +103,7 @@ func teaSession(provider auth.Provider, world *game.Server, s ssh.Session) (tea.
 	}
 
 	fp := auth.Fingerprint(s.PublicKey())
-	identity, err := auth.Identify(provider, fp)
+	identity, err := accts.Identify(fp)
 	if err != nil {
 		slog.Error("auth failed for session", "err", err)
 		wish.Fatalln(s, "authentication failed")
@@ -96,9 +112,10 @@ func teaSession(provider auth.Provider, world *game.Server, s ssh.Session) (tea.
 	slog.Info("session connected",
 		"user", identity.User.Name,
 		"fingerprint", fp,
+		"fresh", identity.AccountFresh,
 		"term", pty.Term)
 
-	return ui.NewRouter(identity, world), nil
+	return ui.NewRouterWithAccounts(identity, world, accts), nil
 }
 
 // ensure host key directory exists before wish tries to write the key

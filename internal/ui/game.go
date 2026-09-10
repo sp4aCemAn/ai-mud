@@ -5,9 +5,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/sp4aceman/ai-mud/internal/auth"
 	"github.com/sp4aceman/ai-mud/internal/game"
 )
 
@@ -23,35 +25,72 @@ func stateTick() tea.Cmd {
 	return tea.Tick(stateTickEvery, func(time.Time) tea.Msg { return stateTickMsg{} })
 }
 
+// verify steps inside the overlay: reveal/copy the one-time password,
+// or replace it; both ack → verified.
+const (
+	vactView  = iota // nothing pending: show nudge actions
+	vactInput        // typing (name or password)
+	vactDone
+)
+
 // GameScreen is the playable view: the player's dot on the terrain
 // grid, stats, enemy dots and the merchant, plus floating windows
-// (pack, fight, store) built from the kit.
+// (pack, fight, store) built from the kit. Unverified accounts get a
+// persistent banner + a quit guard until the one-time password is
+// acknowledged.
 type GameScreen struct {
-	pc game.PlayerView // PlayerView + (optionally) CombatView
+	pc    game.PlayerView // PlayerView + (optionally) CombatView
+	id    auth.Identity
+	accts *auth.Accounts
 
-	fp   string
-	p    game.Player
+	fp    string
+	p     game.Player
 	world game.World
 	fight *game.Fight // live duel (nil = none)
 	shop  *game.Shop  // store overlay (nil = closed)
 	inv   bool        // pack window open
-	log   []string    // latest world events
+	log   []string    // latest world event lines
+
+	// verify nudge state
+	unverified bool // banner + quit guard active
+	verify     bool // overlay open
+	vInput     textinput.Model
+	vMode      string // "" | "name" | "pass"
+	vErr       string
+	copied     bool // "I've copied it" ack set down
+
+	quitAsk bool // double-ctrl+c quit guard (unverified)
 
 	width  int
 	height int
 }
 
-func newGameScreen(pc game.PlayerView, fp, name string) GameScreen {
-	g := GameScreen{pc: pc, fp: fp}
+func newGameScreen(id auth.Identity, pc game.PlayerView) GameScreen {
+	g := GameScreen{
+		id:    id,
+		fp:    id.Fingerprint,
+		pc:    pc,
+		accts: auth.NewAccounts(nil),
+		// key-backed sessions are verified by the handshake itself;
+		// only password-only accounts (anonymous creations that
+		// somehow skipped the ack) carry the nudge + quit guard
+		unverified: id.Verified == false && id.User.Name != "guest",
+	}
+	g.vInput = textinput.New()
+	g.vInput.CharLimit = 32
+	g.vInput.EchoMode = textinput.EchoPassword
+
 	if pc != nil {
-		g.p = pc.Join(fp, name) // idempotent: reconnect reuses the body
-		g.world = g.worldNow()
+		g.p = pc.Join(id.Fingerprint, id.User.Name) // idempotent
+		if c, ok := pc.(game.CombatView); ok {
+			g.world = c.WorldView(id.Fingerprint)
+		}
 	}
 	return g
 }
 
-// cv returns the GameScreen's world-action surface, nil if the view
-// behind it is the plain PlayerView (tests).
+// cv returns the richer world-action interface when the PlayerView
+// supplies combat (plain fakes in tests may not).
 func (g GameScreen) cv() game.CombatView {
 	c, ok := g.pc.(game.CombatView)
 	if ok {
@@ -77,10 +116,39 @@ func (g GameScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		g.width = msg.Width
 		g.height = msg.Height
+		if c := g.cv(); c != nil {
+			// the world remakes at the terminal's size — usable field
+			// after the HUD strip is reserved below it
+			field := innerSize(msg.Width, msg.Height)
+			g.apply(c.Resize(g.fp, field.w, field.h))
+		}
 	case tea.KeyMsg:
-		switch {
-		case g.shop != nil:
-			// the store has focus
+		return g.keyInput(msg)
+	}
+	return g, nil
+}
+
+// keyInput handles keys in priority order: quit guard, verify overlay,
+// store, duel, pack, plain movement.
+func (g GameScreen) keyInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	c := g.cv()
+
+	// quit guard: first ctrl+c warns, a second quits
+	if msg.String() == "ctrl+c" {
+		if g.quitAsk || !g.unverified {
+			return g, tea.Quit
+		}
+		g.quitAsk = true
+		return g, nil
+	}
+	g.quitAsk = false
+
+	switch {
+	case g.verify:
+		return g.verifyInput(msg)
+
+	case g.shop != nil:
+		if c != nil {
 			switch msg.String() {
 			case "1", "2", "3", "4":
 				g.apply(c.Command(g.fp, "buy", int(msg.String()[0]-'0')))
@@ -90,10 +158,13 @@ func (g GameScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				g.shop = nil
 				g.inv = true
 			}
-			return g, nil
+		} else if msg.String() == "esc" || msg.String() == "i" {
+			g.shop = nil
+		}
+		return g, nil
 
-		case g.fight != nil:
-			// the duel has focus
+	case g.fight != nil:
+		if c != nil {
 			switch msg.String() {
 			case "a":
 				g.apply(c.Command(g.fp, "attack", 0))
@@ -104,65 +175,147 @@ func (g GameScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "i":
 				g.inv = true
 			}
-			return g, nil
+		} else if msg.String() == "esc" {
+			g.fight = nil
+		}
+		return g, nil
 
-		case g.inv:
-			// pack has focus: movement must not leak through
-			switch msg.String() {
-			case "esc", "i":
-				g.inv = false
-			case "u": // drink a dark potion
+	case g.inv:
+		switch msg.String() {
+		case "esc", "i":
+			g.inv = false
+		case "u": // drink a dark potion
+			if c != nil {
 				g.apply(c.Command(g.fp, "use", 1))
-			case "m": // sip a mana draught
+			}
+		case "m": // sip a mana draught
+			if c != nil {
 				g.apply(c.Command(g.fp, "use", 2))
 			}
-			return g, nil
 		}
+		return g, nil
+	}
 
-		if c := g.cv(); c != nil {
-			dx, dy := 0, 0
-			switch msg.String() {
-			case "i":
-				g.inv = true
-			case "up", "w", "k":
-				dy = -1
-			case "down", "s", "j":
-				dy = 1
-			case "left", "a", "h":
-				dx = -1
-			case "right", "d", "l":
-				dx = 1
-			}
-			if dx != 0 || dy != 0 {
-				g.apply(c.Interact(g.fp, dx, dy))
-			}
-		} else {
-			dx, dy := 0, 0
-			switch msg.String() {
-			case "i":
-				g.inv = true
-			case "up", "w", "k":
-				dy = -1
-			case "down", "s", "j":
-				dy = 1
-			case "left", "a", "h":
-				dx = -1
-			case "right", "d", "l":
-				dx = 1
-			}
-			if dx != 0 || dy != 0 {
-				if p, ok := g.pc.Move(g.fp, dx, dy); ok {
-					g.p = p
-				}
-			}
+	// free play
+	dx, dy := 0, 0
+	switch msg.String() {
+	case "v":
+		if g.unverified {
+			g.verify = true
+			g.vErr = ""
+			g.vMode = ""
+			g.vInput.Blur()
 		}
+	case "i":
+		g.inv = true
+	case "up", "w", "k":
+		dy = -1
+	case "down", "s", "j":
+		dy = 1
+	case "left", "a", "h":
+		dx = -1
+	case "right", "d", "l":
+		dx = 1
+	}
+	if dx == 0 && dy == 0 {
+		return g, nil
+	}
+	if c != nil {
+		g.apply(c.Interact(g.fp, dx, dy))
+	} else if p, ok := g.pc.Move(g.fp, dx, dy); ok {
+		g.p = p
 	}
 	return g, nil
 }
 
-// apply eats a Result: player, world, overlays and log line all land
-// at once.
-func (g *GameScreen) apply(r game.Result, _ ...tea.Cmd) {
+// verifyInput drives the verify-now overlay: copy/set password, pick
+// your own name.
+func (g GameScreen) verifyInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		g.verify = false
+		g.vMode = ""
+		g.vErr = ""
+		g.vInput.Blur()
+		return g, nil
+	case "enter":
+		if g.vMode == "" {
+			return g, nil
+		}
+		val := strings.TrimSpace(g.vInput.Value())
+		if val == "" {
+			g.vErr = "empty — try again"
+			return g, nil
+		}
+		if g.vMode == "name" {
+			if !ValidName(val) {
+				g.vErr = "names are 3–16 chars, letters first"
+				return g, nil
+			}
+			if err := g.accts.RenameAccount(g.id.User.Name, val); err != nil {
+				g.vErr = "name taken — choose another"
+				return g, nil
+			}
+			g.vMode = ""
+			g.vInput.Blur()
+			return g.applyIdentity(val)
+		}
+		// password mode: setting your own is the ack
+		if err := g.accts.SetPassword(g.id.User.Name, val); err != nil {
+			g.vErr = "the dark refused it — try again"
+			return g, nil
+		}
+		return g.applyIdentity(g.id.User.Name)
+	case "c":
+		// mark the generated password as acknowledged/kept
+		if err := g.accts.AckPassword(g.id.User.Name); err != nil {
+			g.vErr = "failed to ack — retry"
+			return g, nil
+		}
+		return g.applyIdentity(g.id.User.Name)
+	case "n":
+		g.vMode = "name"
+		g.vInput.EchoMode = textinput.EchoNormal
+		g.vInput.Placeholder = "new name"
+		g.vInput.Focus()
+		g.vErr = ""
+		return g, textinput.Blink
+	case "p":
+		g.vMode = "pass"
+		g.vInput.EchoMode = textinput.EchoPassword
+		g.vInput.EchoCharacter = '•'
+		g.vInput.Placeholder = "your own password"
+		g.vInput.Focus()
+		g.vErr = ""
+		return g, textinput.Blink
+	}
+
+	if g.vMode != "" {
+		var cmd tea.Cmd
+		g.vInput, cmd = g.vInput.Update(msg)
+		return g, cmd
+	}
+	return g, nil
+}
+
+// applyIdentity refetches the account state and swaps the identity —
+// the router rebuilds this screen with fresh flags on completion.
+func (g GameScreen) applyIdentity(name string) (tea.Model, tea.Cmd) {
+	acc, err := g.accts.Account(name)
+	if err != nil {
+		g.vErr = "storage hiccup — verified locally"
+		// optimistic: mark session-verified, keep playing
+		g.unverified = false
+		g.verify = false
+		return g, nil
+	}
+	id := g.accts.IdentityForAccount(acc)
+	id.Fingerprint = g.fp
+	return g, swapIdentity(id, ScreenGame)
+}
+
+// apply eats a world Result: player, world, overlays, log lines.
+func (g GameScreen) apply(r game.Result) {
 	g.p = r.Player
 	g.world = r.World
 	g.fight = r.Fight
@@ -178,29 +331,40 @@ func (g GameScreen) View() string {
 		return "entering the world…"
 	}
 
-	layout := lipgloss.JoinHorizontal(lipgloss.Top,
-		Panel{Title: "the world", Content: g.renderField()}.Render(),
-		renderStats(g.p),
-	)
-
-	hintTxt := "hjkl/arrows move · enter stores by bumping · i pack"
-	if g.fight != nil {
+	hud := renderHUD(g.p)
+	hintTxt := "hjkl/arrows move · bump stores/fights to engage · i pack · ctrl+c quit"
+	switch {
+	case g.fight != nil:
 		hintTxt = "[a]ttack · [c]ast · [f]lee"
-	} else if g.shop != nil {
+	case g.shop != nil:
 		hintTxt = "1-4 buy · esc leave"
-	} else if g.inv {
-		hintTxt = "u/m use item · esc/i close"
+	case g.inv:
+		hintTxt = "u/m use · esc close"
 	}
 
-	content := frame(g.width, g.height,
-		lipgloss.JoinVertical(lipgloss.Left,
-			layout,
-			g.renderLog(),
-			hint(hintTxt+" · ctrl+c quit"),
-		),
+	// Diablo layout: full-bleed field, HUD strip pinned bottom-center,
+	// event log + hints under it (or the nudge banner on top).
+	body := lipgloss.JoinVertical(lipgloss.Center,
+		g.renderField(),
+		hint(g.renderLog()),
+		lipgloss.NewStyle().Width(g.width).Align(lipgloss.Center).Render(hud),
+		hint(hintTxt),
 	)
+	content := body
+	if g.unverified {
+		content = lipgloss.JoinVertical(lipgloss.Left,
+			hint("⚠ unverified: your body would die here — set/copy the password. [v]erify"),
+			content,
+		)
+	}
+	if g.width > 0 {
+		content = lipgloss.Place(g.width, g.height,
+			lipgloss.Center, lipgloss.Bottom, content)
+	}
 
 	switch {
+	case g.verify:
+		content = Overlay(content, g.renderVerify())
 	case g.shop != nil:
 		content = Overlay(content, renderShop(g.shop))
 	case g.fight != nil:
@@ -211,12 +375,76 @@ func (g GameScreen) View() string {
 	return content
 }
 
-// renderField draws the terrain + dots; @ is the player, x an enemy
-// dot, $ the merchant — plain text for Overlay compositing.
-func (g GameScreen) renderField() string {
+// innerSize converts a terminal size into a world size: what's left
+// after the HUD strip (bars + log + hint lines) and glyph gutters.
+func innerSize(termW, termH int) (sz struct{ w, h int }) {
+	w := termW - 2 // left/right gutters so glyphs never soft-wrap
+	h := termH - 5 // HUD + log line + hint line + top gutter
+	if w < game.MinW {
+		w = game.MinW
+	}
+	if h < game.MinH {
+		h = game.MinH
+	}
+	if w > game.MaxW {
+		w = game.MaxW
+	}
+	if h > game.MaxH {
+		h = game.MaxH
+	}
+	sz.w, sz.h = w, h
+	return sz
+}
+
+// renderHUD is the Diablo-style bottom strip: bars + vitals, plus a
+// small dim pos readout (smoke tests assert on it).
+func renderHUD(p game.Player) string {
+	hp := Bar("hp", p.HP, p.MaxHP, 10)
+	mana := Bar("mp", p.Mana, p.MaxMana, 10)
+	vitals := fmt.Sprintf("⚔%d ⛨%d ❦%d", p.Atk, p.Def, p.Coins)
+	return fmt.Sprintf("%s   %s   %s   %d,%d", hp, mana, vitals, p.X, p.Y)
+}
+
+// renderVerify is the verify-now overlay: the one-time password,
+// opt-in rename, or set-your-own password.
+func (g GameScreen) renderVerify() string {
 	var b strings.Builder
-	for y := 0; y < game.WorldH; y++ {
-		for x := 0; x < game.WorldW; x++ {
+	b.WriteString("your body plays under an account born of whim:\n\n")
+	fmt.Fprintf(&b, "  callsign:  %s\n", g.id.User.Name)
+	b.WriteString("\nyour account can be verified in three ways (any of them):\n\n")
+	b.WriteString("  [c] 'I've copied/kept the one-time password'  ← easiest\n")
+	b.WriteString("  [p] set your own password\n")
+	b.WriteString("  [n] rename yourself afterwards too\n\n")
+	if g.vMode != "" {
+		b.WriteString(g.vInput.View() + "\n")
+	}
+	if g.vErr != "" {
+		fmt.Fprintf(&b, "\n✗ %s\n", g.vErr)
+	}
+	b.WriteString("\nesc keep playing unverified")
+	return Panel{Title: "Verify Now", Content: b.String()}.Render()
+}
+
+// renderField draws the terrain + dots; @ is the player, x an enemy
+// dot, $ the merchant — plain text so Overlay stays ANSI-correct.
+// Size follows the world snapshot (which the Resize call rebuilds at
+// the terminal's size).
+func (g GameScreen) renderField() string {
+	h := g.world.H
+	ww := g.world.W
+	if h == 0 {
+		h = len(g.world.Tiles)
+	}
+	if ww == 0 {
+		if len(g.world.Tiles) > 0 {
+			ww = len([]rune(g.world.Tiles[0]))
+		} else {
+			ww = game.WorldW
+		}
+	}
+	var b strings.Builder
+	for y := 0; y < h; y++ {
+		for x := 0; x < ww; x++ {
 			if x == g.p.X && y == g.p.Y {
 				b.WriteString("@")
 				continue
@@ -238,19 +466,6 @@ func (g GameScreen) worldGlyph(x, y int) rune {
 		return row[x]
 	}
 	return '·'
-}
-
-// renderStats is the side panel: identity + HP/Mana/coin/rage stats.
-func renderStats(p game.Player) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "name  %s\n", p.Name)
-	fmt.Fprintf(&b, "lv    %d  xp %d\n", p.Level, p.XP)
-	b.WriteString(Bar("hp  ", p.HP, p.MaxHP, 10) + "\n")
-	b.WriteString(Bar("mana", p.Mana, p.MaxMana, 10) + "\n")
-	fmt.Fprintf(&b, "coin  %d\n", p.Coins)
-	fmt.Fprintf(&b, "atk   %d   def %d\n", p.Atk, p.Def)
-	fmt.Fprintf(&b, "pos   %d,%d", p.X, p.Y)
-	return Panel{Title: "stats", Content: b.String()}.Render()
 }
 
 // renderLog keeps the last few lines of world events visible.
@@ -289,11 +504,11 @@ func renderShop(s *game.Shop) string {
 	return Panel{Title: s.Keeper, Content: b.String()}.Render()
 }
 
-// renderPack is the inventory overlay (windowed over the field).
+// renderPack is the pack overlay.
 func renderPack(p game.Player) string {
 	var b strings.Builder
 	if len(p.Inventory) == 0 {
-		b.WriteString("— nothing yet —")
+		b.WriteString("— nothing yet —\n")
 	} else {
 		for name, n := range p.Inventory {
 			fmt.Fprintf(&b, "%-16s x%d\n", name, n)

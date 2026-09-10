@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -42,10 +44,55 @@ func NewServer() *Server {
 		tickEvery: 500 * time.Millisecond,
 		players:   make(map[string]*Player),
 	}
-	spawnWorld(s, rand.New(rand.NewSource(time.Now().UnixNano())))
+	spawnWorld(s, rand.New(rand.NewSource(worldSeed())), WorldW, WorldH)
 	slog.Info("world generated", "size", fmt.Sprintf("%dx%d", WorldW, WorldH),
-		"spawn", fmt.Sprintf("%d,%d", s.state.spawnX, s.state.spawnY))
+		"spawn", fmt.Sprintf("%d,%d", s.state.spawnX, s.state.spawnY),
+		"seed", worldSeed())
 	return s
+}
+
+// regenWorld rebuilds the world at a new size: fresh terrain,
+// merchant and enemy dots. Players stay (stats, coins) and are
+// carried to proportional positions — any that land in water or on a
+// dot reappear at the new spawn. Open fights end (baddies regroup).
+// UI note: do not call per tick; only on real size changes.
+func (s *Server) regenWorld(w, h int) {
+	ww, wh := dim(w, MinW, MaxW), dim(h, MinH, MaxH)
+	if s.state != nil && s.state.ww == ww && s.state.wh == wh {
+		return // no-op: same size, keep the world stable
+	}
+
+	s.playersMu.Lock()
+	defer s.playersMu.Unlock()
+	oldW, oldH := WorldW, WorldH
+	if s.state != nil {
+		oldW, oldH = s.state.ww, s.state.wh
+	}
+	spawnWorld(s, rand.New(rand.NewSource(time.Now().UnixNano())), ww, wh)
+	n := s.state
+
+	for fp, p := range s.players {
+		nx := clamp(n.ww*p.X/oldW, 0, ww-1)
+		ny := clamp(n.wh*p.Y/oldH, 0, wh-1)
+		if !walkable(n.tiles, nx, ny) {
+			nx, ny = n.spawnX, n.spawnY
+		}
+		p.X, p.Y = nx, ny
+		delete(n.fights, fp) // enemy dots regenerated; duels end
+	}
+	s.state.setEvent("global", "the land ripples — remade at the size of your eyes")
+	slog.Info("world resized", "size", fmt.Sprintf("%dx%d", ww, wh))
+}
+
+// worldSeed is time-based, but W_SEED pins it for reproducible smoke
+// tests against a deployed container.
+func worldSeed() int64 {
+	if v := os.Getenv("W_SEED"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
+		}
+	}
+	return time.Now().UnixNano()
 }
 
 // Attach registers a connected client with the game server.

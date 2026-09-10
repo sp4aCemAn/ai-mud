@@ -16,7 +16,14 @@ func testIdentity() auth.Identity {
 	return auth.Identity{
 		Fingerprint: "SHA256:testfp",
 		User:        auth.User{ID: "guest", Name: "guest"},
+		Verified:    true, // key-backed sessions verify in the handshake
 	}
+}
+
+// anonTestIdentity is a key-less guest — no credential, password-only
+// account creation path.
+func anonTestIdentity() auth.Identity {
+	return auth.Identity{Fingerprint: "", User: auth.User{ID: "guest", Name: "guest"}}
 }
 
 // newTestRouter wires the router to a real in-process game server, so
@@ -24,7 +31,16 @@ func testIdentity() auth.Identity {
 func newTestRouter() (tea.Model, *game.Server) {
 	stateTickEvery = time.Millisecond // don't sleep in tests
 	world := game.NewServer()
+	world.DebugFlattenWorld() // deterministic terrain for positional asserts
 	return NewRouter(testIdentity(), world), world
+}
+
+// newTestRouterWith is the same, with a chosen identity.
+func newTestRouterWith(id auth.Identity) (tea.Model, *game.Server) {
+	stateTickEvery = time.Millisecond
+	world := game.NewServer()
+	world.DebugFlattenWorld()
+	return NewRouter(id, world), world
 }
 
 var specialKeys = map[string]tea.KeyType{
@@ -103,10 +119,16 @@ func TestRouterLandingNavigation(t *testing.T) {
 		t.Fatalf("key 2 should route to wizard, got %T", activeScreen(r.(Router)))
 	}
 
-	// cursor navigation clamps at the last option
-	r = drive(t, r, "esc", "esc", "down", "down", "enter")
+	// back to landing, one cursor step down then enter → wizard again
+	r = drive(t, r, "esc", "esc", "down", "enter")
 	if _, ok := activeScreen(r.(Router)).(charWizard); !ok {
-		t.Fatalf("cursor+enter should clamp and route to wizard, got %T", activeScreen(r.(Router)))
+		t.Fatalf("down+enter should route to wizard, got %T", activeScreen(r.(Router)))
+	}
+
+	// cursor down twice → past wizard, onto the login screen
+	r = drive(t, r, "esc", "esc", "down", "down", "enter")
+	if _, ok := activeScreen(r.(Router)).(loginScreen); !ok {
+		t.Fatalf("two downs should reach the login screen, got %T", activeScreen(r.(Router)))
 	}
 }
 
@@ -130,7 +152,9 @@ func TestAuthScreenRouteAEndsInGame(t *testing.T) {
 // --- character wizard --------------------------------------------------------
 
 func TestWizardFullWalk(t *testing.T) {
-	r, _ := newTestRouter()
+	// anonymous session: minting an account — the password reveal is
+	// mandatory (it's the body's only credential)
+	r, _ := newTestRouterWith(anonTestIdentity())
 	r = drive(t, r, "2")
 
 	// invalid name rejected (stays on name step)
@@ -140,10 +164,52 @@ func TestWizardFullWalk(t *testing.T) {
 		t.Fatalf("invalid name should stay on stepName with error, step=%d err=%q", w.step, w.errMsg)
 	}
 
-	// valid name → class → confirm → still a dead end (persistence later)
+	// valid name → class → confirm → the one-time password reveal
 	r = drive(t, r, "backspace", "backspace", "T", "h", "o", "r", "enter", "enter", "y")
-	if _, ok := activeScreen(r.(Router)).(unimplemented); !ok {
-		t.Fatalf("finished wizard should land on unimplemented, got %T", activeScreen(r.(Router)))
+	w = activeScreen(r.(Router)).(charWizard)
+	if w.step != stepReveal {
+		t.Fatalf("finished wizard should show the password reveal, step=%d", w.step)
+	}
+	if w.reveal == "" || len(w.reveal) != 25 {
+		t.Fatalf("reveal must carry the 25-char generated password: %q", w.reveal)
+	}
+
+	// enter marks it kept and lands in the world
+	r = drive(t, r, "enter")
+	if _, ok := activeScreen(r.(Router)).(GameScreen); !ok {
+		t.Fatalf("after the reveal, enter should land in the game, got %T", activeScreen(r.(Router)))
+	}
+	gs := activeScreen(r.(Router)).(GameScreen)
+	if gs.id.User.Name != "Thor" || !gs.id.Verified {
+		t.Fatalf("identity should be the new account, verified: %+v", gs.id)
+	}
+}
+
+func TestWizardKeyedSkipsReveal(t *testing.T) {
+	// keyed fresh session: the handshake already verified the player —
+	// no password requirement, straight into the world
+	id := testIdentity()
+	id.AccountFresh = true
+	id.NewPassword = "generated-never-typed-1"
+	r, _ := newTestRouterWith(id)
+
+	r = drive(t, r, "2", "T", "h", "o", "r", "enter", "enter", "y")
+	if _, ok := activeScreen(r.(Router)).(GameScreen); !ok {
+		t.Fatalf("keyed sessions skip the reveal: got %T", activeScreen(r.(Router)))
+	}
+	if r.View() == "" {
+		t.Fatal("game view should render")
+	}
+}
+
+// TestWizardKeyedExisting goes straight in as well: no reveal, no mint.
+func TestWizardKeyedExisting(t *testing.T) {
+	id := testIdentity() // keyed, non-fresh
+	id.AccountFresh = false
+	r, _ := newTestRouterWith(id)
+	r = drive(t, r, "2", "T", "h", "o", "r", "enter", "enter", "y")
+	if _, ok := activeScreen(r.(Router)).(GameScreen); !ok {
+		t.Fatalf("keyed non-fresh sessions should enter the world, got %T", activeScreen(r.(Router)))
 	}
 }
 
@@ -169,11 +235,13 @@ func TestWizardRestartWithN(t *testing.T) {
 	}
 }
 
-func TestUnimplementedEscReturnsToLanding(t *testing.T) {
-	r, _ := newTestRouter()
+func TestRevealEscBacksOutToConfirm(t *testing.T) {
+	// anonymous session (the reveal path)
+	r, _ := newTestRouterWith(anonTestIdentity())
 	r = drive(t, r, "2", "T", "h", "o", "r", "enter", "enter", "y", "esc")
-	if _, ok := activeScreen(r.(Router)).(Landing); !ok {
-		t.Fatalf("esc on unimplemented should return to landing, got %T", activeScreen(r.(Router)))
+	w := activeScreen(r.(Router)).(charWizard)
+	if w.step != stepConfirm {
+		t.Fatalf("esc on the reveal should return to confirm, step=%d", w.step)
 	}
 }
 
@@ -184,6 +252,7 @@ func gameScreenAfterJoin(t *testing.T) (tea.Model, *game.Server) {
 	r, world := newTestRouter()
 	r = drive(t, r, "1")
 	r = pump(t, r, spinner.TickMsg{}, 300)
+	world.DebugFlattenWorld() // the resize regen re-rolls terrain — flatten again
 	gs, ok := activeScreen(r.(Router)).(GameScreen)
 	if !ok {
 		t.Fatalf("expected game screen, got %T", activeScreen(r.(Router)))
@@ -193,6 +262,7 @@ func gameScreenAfterJoin(t *testing.T) (tea.Model, *game.Server) {
 		m, _ := r.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 		r = m.(Router)
 	}
+	world.DebugFlattenWorld()
 	return r, world
 }
 
@@ -261,11 +331,8 @@ func TestGameViewRenders(t *testing.T) {
 	if !strings.Contains(v, "@") {
 		t.Fatal("player dot @ missing from view")
 	}
-	if !strings.Contains(v, "stats") || !strings.Contains(v, "the world") {
-		t.Fatal("panel titles missing")
-	}
-	if !strings.Contains(v, "hp") || !strings.Contains(v, "mana") || !strings.Contains(v, "lv") {
-		t.Fatal("stat lines missing")
+	if !strings.Contains(v, "hp") || !strings.Contains(v, "mp") || !strings.Contains(v, "⚔") {
+		t.Fatal("HUD lines missing (hp/mana/vitals)")
 	}
 	if !strings.Contains(v, "██████████") {
 		t.Fatal("full HP bar missing")
@@ -273,11 +340,11 @@ func TestGameViewRenders(t *testing.T) {
 
 	r = drive(t, r, "i")
 	v = r.View()
-	if !strings.Contains(v, "Inventory") {
+	if !strings.Contains(v, "Pack") {
 		t.Fatal("inventory window title missing when open")
 	}
 	r = drive(t, r, "esc")
-	if strings.Contains(r.View(), "Inventory") {
+	if strings.Contains(r.View(), "Pack") {
 		t.Fatal("inventory should be gone after esc")
 	}
 }
@@ -294,8 +361,8 @@ func TestShortFP(t *testing.T) {
 // --- name validation ----------------------------------------------------------
 
 func TestValidName(t *testing.T) {
-	valid := []string{"Thor", "xena1", "A0b9"}
-	invalid := []string{"", "ab", "has space", "1leading", "waytoolongnameaaaa", "sym!"}
+	valid := []string{"Thor", "xena1", "A0b9", "grim thistle", "Fir Two"}
+	invalid := []string{"", "ab", "1leading", "waytoolongnameaaaa", "sym!"}
 	for _, n := range valid {
 		if !ValidName(n) {
 			t.Errorf("%q should be valid", n)

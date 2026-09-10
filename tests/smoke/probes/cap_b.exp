@@ -1,0 +1,18 @@
+#!/usr/bin/expect -f
+set timeout 20
+log_user 0
+set stty_init "rows 30 columns 100"
+log_file -a /tmp/capb.txt
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 walker@127.0.0.1
+expect { -re "Join World" {} timeout { exit 2 } }
+send "2"
+expect { -re "what shall we call you" {} timeout { exit 3 } }
+send "Thor\r"
+expect { -re "choose a class" {} timeout { exit 4 } }
+send "j"
+send "\r"
+expect { -re "create this character" {} timeout { exit 5 } }
+sleep 3
+send "q"
+expect eof
+exit 0

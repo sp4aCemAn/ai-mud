@@ -1,0 +1,10 @@
+#!/usr/bin/expect -f
+set timeout 25
+log_file -noappend /var/folders/kh/fxhk9gs14m5141dzkwcgdlfm0000gn/T/opencode/lgprobe.txt
+log_user 1
+set stty_init "rows 32 columns 110"
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 d@127.0.0.1
+expect "connected as"
+sleep 1
+send "\003"
+expect eof

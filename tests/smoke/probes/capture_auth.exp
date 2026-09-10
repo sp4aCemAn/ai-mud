@@ -1,0 +1,19 @@
+#!/usr/bin/expect -f
+set timeout 20
+log_user 0
+set stty_init "rows 30 columns 100"
+log_file -a /tmp/auth_capture.txt
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 walker@127.0.0.1
+expect {
+    -re "Join World" {}
+    timeout { exit 2 }
+}
+send "1"
+expect {
+    -re "authenticating" {}
+    timeout { exit 3 }
+}
+sleep 15
+send "q"
+expect eof
+exit 0

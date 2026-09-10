@@ -26,7 +26,10 @@ Owns all world state and the simulation. Key design decision: **it is transport-
 - Players are keyed by SSH key fingerprint ("" = the shared anonymous guest). `Join` is idempotent (reconnect reuses the body); the tick loop **reaps players silent for 30s** — the stand-in for disconnect detection
 - The pre-landgen world is a flat bounded field (`WorldW x WorldH`); `Move` clamps to bounds
 - `Run` is the tick loop (500ms default). All simulation — movement validation today, combat, spawns, AI-generated events later — hangs off `Server.tick`
-- Rooms, exits, entities, and scheduled events are the next phase (world generation)
+- The world is one bounded ASCII field (40×12) with blurred-noise terrain — blank-space water is impassable. Enemy groups and the merchant render as dots on the largest connected land region (`internal/game/world.go`), so nothing is unreachable
+- Turn-based combat with no dead ends: bump an enemy dot to open a duel ([a]ttack / [c]ast / [f]lee); death respawns at spawn with half the purse; a fleeing pack closes or it bites. Kills pay coins/XP (+ the occasional potion), XP levels the body up
+- `Old Marren`, the merchant NPC, opens a store overlay when walked into: potions, draughts, sword (+atk), shroud (+def)
+- The tick loop (500ms) also regenerates players (1 HP / 4s, 1 mana / 8s) and respawns dead enemy groups after 60s. `W_SEED` pins world generation for reproducible smoke tests
 
 ### 4. AI harness — `internal/harness` + `configs/harness.yaml` (skeleton)
 

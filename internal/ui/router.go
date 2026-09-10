@@ -20,6 +20,7 @@ type ScreenID int
 const (
 	ScreenLanding ScreenID = iota
 	ScreenAuth
+	ScreenLogin
 	ScreenNewChar
 	ScreenGame
 	ScreenUnimplemented
@@ -32,9 +33,22 @@ func gotoScreen(id ScreenID) tea.Cmd {
 	return func() tea.Msg { return GotoMsg{ID: id} }
 }
 
+// identitySwapMsg replaces the session identity (login / rename /
+// verification) and lands on a screen in one move — screens can't
+// reach into the router directly.
+type identitySwapMsg struct {
+	id   auth.Identity
+	next ScreenID
+}
+
+func swapIdentity(id auth.Identity, next ScreenID) tea.Cmd {
+	return func() tea.Msg { return identitySwapMsg{id: id, next: next} }
+}
+
 // Router is the top-level model for one SSH session.
 type Router struct {
 	identity auth.Identity
+	accts    *auth.Accounts  // account service (never nil)
 	pc       game.PlayerView // the world client (nil = UI-only, tests)
 	screen   tea.Model
 	width    int
@@ -42,7 +56,14 @@ type Router struct {
 }
 
 func NewRouter(id auth.Identity, pc game.PlayerView) Router {
-	return Router{identity: id, pc: pc, screen: newLanding(id)}
+	return Router{identity: id, accts: auth.NewAccounts(nil), pc: pc, screen: newLanding(id, auth.NewAccounts(nil))}
+}
+
+func NewRouterWithAccounts(id auth.Identity, pc game.PlayerView, accts *auth.Accounts) Router {
+	if accts == nil {
+		accts = auth.NewAccounts(nil)
+	}
+	return Router{identity: id, accts: accts, pc: pc, screen: newLanding(id, accts)}
 }
 
 func (r Router) Init() tea.Cmd {
@@ -58,12 +79,26 @@ func (r Router) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return r, r.screen.Init()
 	}
 
+	// identity swaps re-issue the current screen with upgraded state
+	if got, ok := msg.(identitySwapMsg); ok {
+		r.identity = got.id
+		r.screen = r.screenFor(got.next)
+		return r, r.screen.Init()
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		r.width = msg.Width
 		r.height = msg.Height
 	case tea.KeyMsg:
 		if key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c"))) {
+			// the game screen owns quit-guarding (unverified must
+			// be warned); other screens quit immediately
+			if _, isGame := r.screen.(GameScreen); isGame {
+				m, cmd := r.screen.Update(msg)
+				r.screen = m
+				return r, cmd
+			}
 			return r, tea.Quit
 		}
 	}
@@ -84,13 +119,15 @@ func (r Router) screenFor(id ScreenID) tea.Model {
 	var m tea.Model
 	switch id {
 	case ScreenLanding:
-		m = newLanding(r.identity)
+		m = newLanding(r.identity, r.accts)
 	case ScreenAuth:
 		m = newAuthScreen(r.identity)
+	case ScreenLogin:
+		m = newLoginScreen(r.accts, r.identity)
 	case ScreenNewChar:
-		m = newCharWizard(r.identity)
+		m = newCharWizard(r.identity, r.accts)
 	case ScreenGame:
-		m = newGameScreen(r.pc, r.identity.Fingerprint, r.identity.User.Name)
+		m = newGameScreen(r.identity, r.pc)
 	case ScreenUnimplemented:
 		m = newUnimplemented()
 	default:

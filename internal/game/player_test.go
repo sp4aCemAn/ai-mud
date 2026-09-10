@@ -1,24 +1,11 @@
 package game
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
 
-// flatten normalizes a server's world into an empty walkable field so
-// positional tests don't depend on terrain RNG.
-func flatten(s *Server) {
-	s.playersMu.Lock()
-	defer s.playersMu.Unlock()
-	w := s.state
-	w.enemies = map[int]*Enemy{}
-	w.npcDot = Dot{X: -1, Y: -1}
-	for y := range w.tiles {
-		w.tiles[y] = strings.Repeat(",", WorldW)
-	}
-	w.spawnX, w.spawnY = WorldW/2, WorldH/2
-}
+// flatten (defined in debug.go) normalizes the world for tests.
 
 func TestJoinIdempotentPerFingerprint(t *testing.T) {
 	s := NewServer()
