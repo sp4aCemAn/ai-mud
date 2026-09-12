@@ -105,6 +105,38 @@
   `tests/perf_repro/` (mini, routerflow, bigflow, authcopy), and
   `tests/tmp/` (scratch — safe to wipe; exp scripts reusable).
 
+## Tool-call surface (fresh — this session)
+
+- `internal/game/events.go`: the harness/spice verbs —
+  `SpawnEnemyGroup(SpawnEnemyGroupSpec)`, `DespawnEnemy(id)`,
+  `Announce(text)`, readbacks `WorldSummary()` / `Enemies()`. All take
+  the world lock, validate/clamp, bump the render version. The old
+  `spawnEnemy` is now the random autoplay variant over the shared
+  `spawnEnemyAt(name, count, level, x, y)`.
+- `internal/httpapi/tools.go` + `server.go`: `NewRouter(gs)` and
+  `Run(ctx, cfg, gs)` now take the game server; routes:
+  `GET /api/world`, `GET /api/world/enemies`,
+  `POST /api/world/enemies {name,count,level,x?,y?}`,
+  `DELETE /api/world/enemies/{id}`, `POST /api/world/announce`.
+  main.go wires `gameServer` into httpapi (chi dropped in favor of the
+  stdlib mux — one less dep on the hot path).
+- Stored smokes: `tests/smokes` (`GAME_SMOKE_URL` = deployed contract
+  mode; standalone in-process fallback; `GAME_SMOKE_LIVE_ONLY=1` for CI).
+- World persistence **Part 1 landed** (`internal/storage/world.go` +
+  migration in postgres.go + `world_test.go`): `worlds` (unique name,
+  one-active invariant), `world_objects` (kind-validated upsert with
+  jsonb `tiles`/`data`, edit-by-id), `object_state` (upsert + cascade),
+  `world_snapshots` (latest-wins). All in `RelationalStore` interface.
+  JSON anchors are pointer-based in `SpawnEnemyGroupSpec` (nil = random
+  spot; anything else is an explicit anchor — fixes the tile(0,y)
+  collision). **Part 2 landed**: `NewServerWorld(WorldSpec)` loader +
+  resize-preserving replay in persist.go (terrain from record seed,
+  contents replayed per object; player reposition decoupled), main.go
+  boot prefers the active world row. Live-verified in the container
+  (smokeworld + ashfen raiders replayed from SQL). Still to land:
+  Part 3 harness tools beyond spawn/announce (villages, factions,
+  terrain edits at runtime), Part 4 write-through + snapshots.
+
 ## Infrastructure gotchas (RECAP — still true)
 
 - The temporary ports are **SSH :2525**, **HTTP :8081** (2222/8080 blocked).

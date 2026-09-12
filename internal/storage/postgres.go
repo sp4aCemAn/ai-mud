@@ -55,6 +55,53 @@ func (r *Relational) migrate(ctx context.Context) error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_generations_kind_created
 			ON generations (kind, created_at DESC);
+
+		CREATE TABLE IF NOT EXISTS worlds (
+			id         BIGSERIAL PRIMARY KEY,
+			name       TEXT UNIQUE NOT NULL,
+			seed       BIGINT NOT NULL,
+			ww         INT NOT NULL,
+			wh         INT NOT NULL,
+			spawn_x    INT NOT NULL DEFAULT 0,
+			spawn_y    INT NOT NULL DEFAULT 0,
+			is_active  BOOL NOT NULL DEFAULT false,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_worlds_one_active
+			ON worlds (is_active) WHERE is_active;
+
+		CREATE TABLE IF NOT EXISTS world_objects (
+			id         BIGSERIAL PRIMARY KEY,
+			world_id   BIGINT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+			kind       TEXT NOT NULL,
+			name       TEXT NOT NULL DEFAULT '',
+			seed       BIGINT NOT NULL DEFAULT 0,
+			home_x     INT NOT NULL DEFAULT 0,
+			home_y     INT NOT NULL DEFAULT 0,
+			radius     INT NOT NULL DEFAULT 0,
+			tiles      JSONB NOT NULL DEFAULT '[]',
+			data       JSONB NOT NULL DEFAULT '{}',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		);
+		CREATE INDEX IF NOT EXISTS idx_world_objects_world
+			ON world_objects (world_id, kind);
+
+		CREATE TABLE IF NOT EXISTS object_state (
+			object_id  BIGINT PRIMARY KEY REFERENCES world_objects(id) ON DELETE CASCADE,
+			cur_state  JSONB NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		);
+
+		CREATE TABLE IF NOT EXISTS world_snapshots (
+			id         BIGSERIAL PRIMARY KEY,
+			world_id   BIGINT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+			label      TEXT NOT NULL DEFAULT '',
+			terrain    TEXT NOT NULL,
+			meta       JSONB NOT NULL DEFAULT '{}',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		);
 	`)
 	if err != nil {
 		return fmt.Errorf("storage: postgres migrate: %w", err)

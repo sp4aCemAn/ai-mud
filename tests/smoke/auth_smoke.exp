@@ -95,8 +95,12 @@ send "\003"
 expect eof
 puts "PATH_LOGIN_DONE"
 
+set key /tmp/ai_mud_smoke_key
+if {![file exists $key]} {
+    exec ssh-keygen -t ed25519 -N "" -f $key -q
+    puts "STEP_OK: smoke key minted"
+}
 log_user 1
-set key /var/folders/kh/fxhk9gs14m5141dzkwcgdlfm0000gn/T/opencode/mudkey
 spawn ssh -tt -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 keygate@127.0.0.1
 expect {
     -re {connected as ([a-zA-Z0-9-]+)} { set who $expect_out(1,string); puts "STEP_OK: keyed identity $who" }

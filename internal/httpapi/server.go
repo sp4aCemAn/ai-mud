@@ -1,6 +1,6 @@
 // Package httpapi is the web interface for the MUD.
-// For now it only exposes health/metadata endpoints; the actual web
-// client will be built on top of this later.
+// Health/metadata endpoints plus the tool-call surface the AI harness
+// and operators drive: spawn/despawn world content, announce.
 package httpapi
 
 import (
@@ -11,8 +11,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	"github.com/sp4aceman/ai-mud/internal/game"
 )
 
 type Config struct {
@@ -24,24 +23,28 @@ func DefaultConfig() Config {
 	return Config{Addr: "0.0.0.0:8081"}
 }
 
-func NewRouter() http.Handler {
-	r := chi.NewRouter()
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
+// NewRouter serves: /healthz plus the tool routes. The game server is
+// injected (nil → health only; tool calls need a live world).
+func NewRouter(gs *game.Server) http.Handler {
+	mux := http.NewServeMux()
 
-	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok\n"))
 	})
 
-	return r
+	if gs != nil {
+		mux.Handle("/api/", toolRoutes(gs))
+	}
+
+	return mux
 }
 
 // Run starts the HTTP server and blocks until ctx is cancelled.
-func Run(ctx context.Context, cfg Config) error {
+func Run(ctx context.Context, cfg Config, gs *game.Server) error {
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           NewRouter(),
+		Handler:           NewRouter(gs),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -56,7 +59,7 @@ func Run(ctx context.Context, cfg Config) error {
 		close(done)
 	}()
 
-	slog.Info("http server listening", "addr", cfg.Addr)
+	slog.Info("http server listening", "addr", cfg.Addr, "tools", gs != nil)
 	err := srv.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 		return err

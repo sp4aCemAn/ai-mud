@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -51,6 +52,29 @@ func main() {
 	}
 	defer store.Close()
 
+	// worlds: when an active persisted world exists it REPLACES the
+	// seed-env world — the loader replays terrain (from the record's
+	// seed) and authored content (world_objects). No persisted world →
+	// the classic W_SEED flow (a re-activated world shows up on restart).
+	if w, err := store.Relational.ActiveWorld(ctx); err == nil {
+		objs, err2 := store.Relational.ListObjects(ctx, w.ID)
+		if err2 != nil {
+			slog.Warn("persisted world content unreachable, using seed flow", "err", err2)
+		} else {
+			gameServer = game.NewServerWorld(game.WorldSpec{
+				Name:    w.Name,
+				Seed:    w.Seed,
+				WW:      w.WW,
+				WH:      w.WH,
+				SpawnX:  w.SpawnX,
+				SpawnY:  w.SpawnY,
+				Objects: objs,
+			})
+		}
+	} else if !errors.Is(err, storage.ErrNotFound) {
+		slog.Warn("active world lookup failed, using seed flow", "err", err)
+	}
+
 	// accounts live in the document backend; nil Document → memory mode
 	accts := auth.NewAccounts(store.Document)
 
@@ -60,7 +84,7 @@ func main() {
 		return sshserver.Run(ctx, sshserver.DefaultConfig(), gameServer, accts)
 	})
 	g.Go(func() error {
-		return httpapi.Run(ctx, httpapi.DefaultConfig())
+		return httpapi.Run(ctx, httpapi.DefaultConfig(), gameServer)
 	})
 	g.Go(func() error {
 		return gameServer.Run(ctx)

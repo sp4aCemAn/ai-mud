@@ -81,49 +81,61 @@ func enemyHP(r *rand.Rand, count, level int) (int, int) {
 	return r.Intn(max/2+1) + max/2, max
 }
 
-// spawnWorld generates terrain (at ww×wh) and populates it. Called at
-// server construction and on Resize.
+// spawnWorld generates terrain (at ww×wh) and populates it with the
+// default autoplay content (merchant near spawn + a few groups).
+// Called at server construction and on Resize for seed-env worlds;
+// persisted worlds route through spawnWorldBase + replayContent.
 func spawnWorld(s *Server, r *rand.Rand, ww, wh int, genBase uint64) {
-	tiles, sx, sy := genTerrain(r, ww, wh)
-	w := &worldState{
-		ww:        ww,
-		wh:        wh,
-		tiles:     tiles,
-		spawnX:    sx,
-		spawnY:    sy,
-		region:    mainRegion(tiles),
-		enemies:   make(map[int]*Enemy),
-		fights:    make(map[string]*Fight),
-		shops:     make(map[string]bool),
-		rnd:       r,
-		maxGroups: 4,
-		version:   genBase,
-	}
-	w.npcDot = newMerchant(w, sx, sy)
+	spawnWorldBase(s, r, ww, wh)
+	populateDefaultWorld(s)
+	w := s.state
+	w.version = genBase
+	w.changed()
+}
+
+// populateDefaultWorld adds the autoplay content set to the world:
+// the merchant dot and the starting enemy groups.
+func populateDefaultWorld(s *Server) {
+	w := s.state
+	w.changed()
+	w.npcDot = newMerchant(w, w.spawnX, w.spawnY)
 	for i := 0; i < w.maxGroups; i++ {
 		w.spawnEnemy()
 	}
-	w.changed()
-
-	s.state = w
 }
 
-// spawnEnemy creates one live group on a free walkable tile.
+// spawnEnemy creates one live group on a free walkable tile (the
+// autoplay variant — random spot, random band, themed name).
 func (w *worldState) spawnEnemy() {
 	x, y := w.randomSpot()
-	count := w.rnd.Intn(4) + 1 // 1–4 baddies per dot
-	lvl := w.rnd.Intn(3) + 1
-	hp, max := enemyHP(w.rnd, count, lvl)
-	id := w.nextEnemyID
-	w.nextEnemyID++
-	w.enemies[id] = &Enemy{
-		ID:   id,
-		Name: fightNames[w.rnd.Intn(len(fightNames))],
-		X:    x, Y: y,
-		Count: count,
-		HP:    hp, MaxHP: max,
-		Level: lvl,
+	w.spawnEnemyAt("", 0, 0, x, y)
+}
+
+// spawnEnemyAt is spawnEnemy parameterized: authored name/count/level
+// at a specific tile (tools place groups precisely; autoplay spawns
+// use the random variant). Bumps nothing — callers bump on batch.
+func (w *worldState) spawnEnemyAt(name string, count, level, x, y int) (*Enemy, bool) {
+	if name == "" {
+		name = fightNames[w.rnd.Intn(len(fightNames))]
 	}
+	if count <= 0 {
+		count = w.rnd.Intn(4) + 1
+	}
+	if level <= 0 {
+		level = w.rnd.Intn(3) + 1
+	}
+	hp, max := enemyHP(w.rnd, count, level)
+	id := w.nextEnemyID
+	e := &Enemy{
+		ID:   id,
+		Name: name,
+		X:    x, Y: y,
+		Count: count, Level: level,
+		HP: hp, MaxHP: max,
+	}
+	w.nextEnemyID++
+	w.enemies[id] = e
+	return e, true
 }
 
 func (w *worldState) randomSpot() (int, int) {

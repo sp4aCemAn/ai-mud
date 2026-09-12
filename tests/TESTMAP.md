@@ -10,7 +10,7 @@ the path — nothing is generated.
 | Script | What it drives |
 |---|---|
 | `ui_smoke.exp` | Full smoke against a running server on :2525 — both landing routes (Join World → auth narration → GameScreen, and the New Character wizard end-to-end incl. password reveal), movement (RELATIVE assert: waits out the resize-regen burst, captures settled spawn coords, then asserts `j` moves one step), pack open/close. Terminal pinned to `stty_init rows 30 columns 100`. Runs green on a fresh container; spacing repeated runs ~40s avoids the spawn-tile race. |
-| `auth_smoke.exp` | The auth loop end-to-end, 4 paths: (1) anonymous wizard → account mint → 25-char one-time password reveal (captured from the reveal pane, not the raw stream) → world entry; quit → log back in with name + captured password; (3) a real SSH key connect → auto-mint + `Play as` recall; (4) password login from the keyed device PULLS the fingerprint from the auto-account (steal), and the next keyed connect recalls the NAMED account. Needs the throwaway key at `/tmp/opencode/mudkey`-style path in the script; keyless sections pass through the press-enter guest gate. |
+| `auth_smoke.exp` | The auth loop end-to-end, 4 paths: (1) anonymous wizard → account mint → 25-char one-time password reveal (captured from the reveal pane, not the raw stream) → world entry; quit → log back in with name + captured password; (3) a real SSH key connect → auto-mint + `Play as` recall; (4) password login from the keyed device PULLS the fingerprint from the auto-account (steal), and the next keyed connect recalls the NAMED account. The keyed section mints its own throwaway key at `/tmp/ai_mud_smoke_key` if missing (nothing to install manually); keyless sections pass through the press-enter guest gate. |
 
 Run it:
 
@@ -41,6 +41,38 @@ probes: `latency.exp` measures key→frame over SSH; `retuser_all.exp`/
 `ret_steal.exp` were the working drafts of the steal smoke). Safe to
 wipe; nothing product depends on it.
 
+## World persistence (Part 2: loader)
+
+- `internal/game/persist.go`: `NewServerWorld(WorldSpec)` boots terrain
+  from the record's seed and replays authored `world_objects`
+  (enemy_groups placed with payload stats, the first village/merchant
+  row takes the merchant/keeper dot, kind=edit rows patch terrain
+  glyphs post-regen). Resize regenerates terrain from the SAME record
+  seed and replays content — players are no longer repositioned unless
+  their tile drowned; the render version never rewinds (caches key on
+  it).
+- `cmd/app/server/main.go`: boot prefers the persisted world row —
+  `ActiveWorld` → load → replace the seed-env world; no active world →
+  classic `W_SEED` flow.
+- Verified live: a row in `worlds` + two `world_objects` came up as the
+  served world after restart (`/api/world` shows `spawnX=49 enemyCount=1
+  version=3`), and the deploy contract suite + both SSH smokes stayed
+  green.
+- Tests: `internal/game/persist_test.go` (content replay, merchant
+  placement, resize round-trips).
+
+## Stored API-level smokes: `tests/smokes/`
+
+| File | What it drives |
+|---|---|
+| `suite_test.go` | `TestSmokeSuite` — registered scenarios against the tool-call surface of the HTTP API (`/api/world/*`): world summary sanity, tool-spawn a hostile group and read it back (name/count/level + bounds), announce, despawn round-trip. |
+| `smoketest/` (framework) | `Env` client: targets a live deployed server when `GAME_SMOKE_URL` is set (contract mode — smoke what's deployed), otherwise spins an in-process standalone stack (game + httpapi, memory accounts). `GAME_SMOKE_LIVE_ONLY=1` forbids the standalone path. This is the home of future *stored* smokes — whenever a feature lands, register a smoke here rather than writing another ad-hoc expect script. SSH-level smokes stay in `tests/smoke/*.exp`. |
+
+Run it:
+
+    go test ./tests/smokes -count=1                                # standalone, no server needed
+    GAME_SMOKE_LIVE_ONLY=1 GAME_SMOKE_URL=http://127.0.0.1:8081 go test ./tests/smokes -count=1
+
 ## Go tests (in-package, committed where the code lives)
 
 | File | Package | Covers |
@@ -50,6 +82,7 @@ wipe; nothing product depends on it.
 | `internal/auth/auth_test.go` | auth | templated Provider seam (lookup/create/idempotency), fingerprint derivation, JSON stop-gap store (atomic file writes, key lookup) |
 | `internal/auth/accounts_test.go` | auth | memory-mode accounts: auto-account minting, password check, credential conflicts; **`TestLoginStealsKeyBoundToAnotherAccount`** — password login from a device whose fp is bound elsewhere moves the binding (old account stripped, index re-pointed) |
 | `internal/storage/storage_test.go` | storage | integration vs real containers (gate `STORAGE_INTEGRATION=1`): generations table round-trip, account CRUD incl. credential conflicts + rename reindexing, same-owner re-attach idempotency, the fp-steal (old account stripped, index re-pointed), unverified reaper list |
+| `internal/storage/world_test.go` | storage | integration (`STORAGE_INTEGRATION=1`): world-persistence Part 1 — `worlds` CRUD (name conflict, one-active invariant, cascade deletes), `world_objects` insert/edit/list-by-kind with jsonb payloads, `object_state` upsert + cascade on object delete, `world_snapshots` (save two, latest-wins, delete-rolls-back) |
 | `internal/harness/client_test.go` | harness | OpenAI-compatible client against a stubbed server |
 | `internal/ui/ui_test.go` | ui | the full user loop: router FSM navigation, route-A auth narration → GameScreen, wizard walk (name validation, class select, confirm, reveal step), movement incl. overlay focus isolation, view render smoke |
 

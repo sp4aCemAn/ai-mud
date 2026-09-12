@@ -164,6 +164,29 @@ type RelationalStore interface {
 	SaveGeneration(ctx context.Context, g Generation) (Generation, error)
 	// RecentGenerations lists the latest artifacts, newest first.
 	RecentGenerations(ctx context.Context, limit int) ([]Generation, error)
+
+	// --- world persistence (see world.go) ---
+	// CreateWorld inserts one world; ErrConflict when the name is taken.
+	CreateWorld(ctx context.Context, w *World) error
+	ListWorlds(ctx context.Context) ([]WorldCard, error)
+	// World fetches one saved world; ErrNotFound when absent.
+	World(ctx context.Context, id int64) (World, error)
+	ActiveWorld(ctx context.Context) (World, error)
+	ActivateWorld(ctx context.Context, id int64) error
+	DeleteWorld(ctx context.Context, id int64) error
+
+	// UpsertObject inserts or edits one placement; edit-by-id path.
+	UpsertObject(ctx context.Context, o *WorldObject) error
+	DeleteObject(ctx context.Context, objectID int64) error
+	ListObjects(ctx context.Context, worldID int64, kinds ...string) ([]WorldObject, error)
+	GetObjectState(ctx context.Context, objectID int64) (ObjectState, error)
+	PutObjectState(ctx context.Context, st *ObjectState) error
+
+	// SaveSnapshot stores a full terrain checkpoint.
+	SaveSnapshot(ctx context.Context, s *WorldSnapshot) error
+	LatestSnapshot(ctx context.Context, worldID int64) (WorldSnapshot, error)
+	DeleteSnapshot(ctx context.Context, id int64) error
+
 	Close()
 }
 

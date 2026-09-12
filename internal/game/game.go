@@ -39,6 +39,9 @@ type Server struct {
 	// players are keyed by fingerprint (the identity for now).
 	playersMu sync.Mutex
 	players   map[string]*Player
+
+	// loaded is the persisted-world spec (nil = classic seed-env flow).
+	loaded *WorldSpec
 }
 
 func NewServer() *Server {
@@ -71,10 +74,20 @@ func (s *Server) regenWorld(w, h int) {
 	if s.state != nil {
 		oldW, oldH = s.state.ww, s.state.wh
 	}
-	// revise the resize counter into the seed: deterministic worlds at
-	// every resize (W_SEED + n) instead of fresh entropy
-	s.regenCount++
-	spawnWorld(s, rand.New(rand.NewSource(worldSeed()+int64(s.regenCount))), ww, wh, uint64(s.regenCount)*1_000_000)
+	// seed the terrain: for persisted worlds the record's seed is
+	// authoritative at every size; for seed-env worlds the resize
+	// ladder (W_SEED + n) keeps each resize deterministic.
+	versionBefore := s.state.version
+	if s.loaded != nil {
+		s.loaded.WW, s.loaded.WH = ww, wh
+		spawnWorldBase(s, rand.New(rand.NewSource(s.loaded.Seed)), ww, wh)
+	} else {
+		s.regenCount++
+		spawnWorld(s, rand.New(rand.NewSource(worldSeed()+int64(s.regenCount))), ww, wh, uint64(s.regenCount)*1_000_000)
+	}
+	// authored content goes back on the new terrain (persisted worlds
+	// only); players are NOT repositioned unless their tile drowned
+	s.replayContentReared(versionBefore)
 	n := s.state
 
 	for fp, p := range s.players {
