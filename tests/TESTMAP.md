@@ -105,6 +105,28 @@ wipe; nothing product depends on it.
   no-double-free, bad-spec rejections, seed-flow stays memory-only) and
   the API smokes in `tests/smokes/` (see below).
 
+## Camera (viewport windowing)
+
+- `internal/ui/game.go`: the field pane is a **camera window** into the
+  world, not the whole world. `camX/camY` is the window's top-left; it
+  pans only when the player walks out of a `camPad=3` dead-zone next to
+  a viewport edge (lazy — never hard-centered, minimal repaint churn),
+  clamped to `[0, W-vw] × [0, H-vh]`. Worlds smaller than the pane drop
+  back to today's full-block render (cam pinned at 0,0).
+- The terrain cache keys on **(version, camX, camY, paneW, paneH)** —
+  a pan or pane change re-cuts the slice, a plain move only splices
+  `@` on top (same per-frame cost as before). Enemy dots `x` and the
+  merchant `$` now bake into the cached slice (WorldView's `Dots`,
+  previously produced but never composited).
+- Resize decoupling: the world only **grows** to fit a bigger pane
+  (`c.Resize(max(field, curW))`); a smaller pane keeps the world and
+  pans. Persisted worlds (98×25 live right now) render windowed on
+  small terminals instead of being regenerated to fit.
+- Tests: `TestCameraPansWithPlayer` (pan on leaving the dead zone,
+  wall-clamp ride, lazy mid-pane non-pan, ride-back on the west wall),
+  `TestCameraSmallWorldStaysPut` (fully visible world never pans),
+  `TestCameraFieldRendersDots` (enemy dot visible in the slice).
+
 ## Stored API-level smokes: `tests/smokes/`
 
 | File | What it drives |

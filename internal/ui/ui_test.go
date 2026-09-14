@@ -100,9 +100,7 @@ func pump(t *testing.T, r tea.Model, first tea.Msg, budget int) tea.Model {
 	return r
 }
 
-func activeScreen(r Router) tea.Model { return r.screen }
-
-// --- router / navigation ----------------------------------------------------
+func activeScreen(r Router) tea.Model { return r.screen } // --- router / navigation ----------------------------------------------------
 
 func TestRouterLandingNavigation(t *testing.T) {
 	r, _ := newTestRouter()
@@ -387,5 +385,103 @@ func TestLandingViewShowsIdentity(t *testing.T) {
 	}
 	if !strings.Contains(v, "█████╗") {
 		t.Error("landing should render the ASCII logo")
+	}
+}
+
+// --- camera (world-viewport windowing) --------------------------------------
+
+func TestCameraPansWithPlayer(t *testing.T) {
+	r, _ := gameScreenAfterJoin(t) // terminal 80×24: pane ≥ world → cam pinned
+
+	// a small pane: the world (40×12) stays 40×12; the viewport is
+	// 38×9. Spawn is inside the horizontal dead zone (no x-pan) but
+	// may sit low enough for one vertical snap — the invariant that
+	// matters is the player inside the visible slice
+	r, _ = r.Update(tea.WindowSizeMsg{Width: 40, Height: 14})
+	gs := activeScreen(r.(Router)).(GameScreen)
+	vw0, vh0 := gs.fieldSize()
+	if gs.camX != 0 {
+		t.Fatalf("spawn inside the dead zone should not pan horizontally: cam=(%d,%d)", gs.camX, gs.camY)
+	}
+	if gs.p.Y < gs.camY || gs.p.Y >= gs.camY+vh0 {
+		t.Fatalf("spawn left the visible slice: cam=(%d,%d) pane %dx%d player (%d,%d)",
+			gs.camX, gs.camY, vw0, vh0, gs.p.X, gs.p.Y)
+	}
+
+	// walk east to the right edge: the camera pans once the player
+	// leaves the dead zone, clamped to the world's right margin
+	for i := 0; i < 25; i++ { // spawn 20 → 39 (the east wall)
+		r = drive(t, r, "l")
+	}
+	gs = activeScreen(r.(Router)).(GameScreen)
+	vw, _ := gs.fieldSize()
+	wantX := game.WorldW - vw // clamped follow
+	if gs.p.X != game.WorldW-1 {
+		t.Fatalf("player should reach the east wall: %d,%d", gs.p.X, gs.p.Y)
+	}
+	if gs.camX != wantX {
+		t.Fatalf("camera did not ride the right edge with the player: cam=%d want=%d", gs.camX, wantX)
+	}
+	if gs.p.Y < gs.camY || gs.p.Y >= gs.camY+9 {
+		t.Fatalf("player not visible in the slice: cam=(%d,%d) player (%d,%d)", gs.camX, gs.camY, gs.p.X, gs.p.Y)
+	}
+
+	// and back west: the dead zone is lazy — mid-panes do NOT pan
+	// (the player is still comfortably visible)…
+	for i := 0; i < 25; i++ {
+		r = drive(t, r, "h")
+	}
+	gs = activeScreen(r.(Router)).(GameScreen)
+	if gs.camX != wantX {
+		t.Fatalf("walking inside the dead zone must not pan: cam=%d want=%d", gs.camX, wantX)
+	}
+	// …but the west wall yanks it fully back
+	for i := 0; i < 45; i++ {
+		r = drive(t, r, "h")
+	}
+	gs = activeScreen(r.(Router)).(GameScreen)
+	if gs.camX != 0 {
+		t.Fatalf("reaching the west edge should pan back: cam=%d", gs.camX)
+	}
+}
+
+func TestCameraSmallWorldStaysPut(t *testing.T) {
+	// pane far larger than the world: full-block render, camera at 0,0
+	r, _ := gameScreenAfterJoin(t)
+	gs := activeScreen(r.(Router)).(GameScreen)
+	r, _ = r.Update(tea.WindowSizeMsg{Width: 200, Height: 60})
+	gs = activeScreen(r.(Router)).(GameScreen)
+	if gs.camX != 0 || gs.camY != 0 {
+		t.Fatalf("small world must not pan: cam=(%d,%d)", gs.camX, gs.camY)
+	}
+	vw, vh := gs.fieldSize()
+	if vw != game.WorldW || vh != game.WorldH {
+		t.Fatalf("viewport should equal the world: %dx%d", vw, vh)
+	}
+}
+
+func TestCameraFieldRendersDots(t *testing.T) {
+	r, world := gameScreenAfterJoin(t)
+	gs := activeScreen(r.(Router)).(GameScreen)
+
+	x0, y0 := 22, 4
+	if _, err := world.SpawnEnemyGroup(game.SpawnEnemyGroupSpec{Name: "sighted patrol",
+		Count: 1, Level: 1, X: &x0, Y: &y0}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	// a state tick pulls the snapshot (dots + version) into the screen
+	r, _ = r.Update(stateTickMsg{})
+	gs = activeScreen(r.(Router)).(GameScreen)
+	field := gs.renderField()
+	lines := strings.Split(field, "\n")
+	rely := y0 - gs.camY
+	reli := x0 - gs.camX
+	if rely < 0 || len(lines) <= rely {
+		t.Fatalf("dot row out of the viewport: %d", rely)
+	}
+	row := []rune(lines[rely])
+	if reli < 0 || len(row) <= reli || row[reli] != 'x' {
+		t.Fatalf("enemy dot missing from visible slice at %d,%d (cam %d,%d): %q",
+			x0, y0, gs.camX, gs.camY, string(row))
 	}
 }

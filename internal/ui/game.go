@@ -71,7 +71,20 @@ type GameScreen struct {
 	pendingResizeW  int
 	pendingResizeH  int
 	resizeScheduled bool
+
+	// camera: the viewport's top-left world tile. Moves only when the
+	// player walks out of the padded dead zone (never hard-centered —
+	// stops chars repaint churn on every step).
+	camX, camY int
+
+	// cache key extras: the window itself is part of the identity —
+	// a pan or a pane change re-cuts the slice, a plain move doesn't.
+	cacheCamX, cacheCamY, cacheW, cacheH int
 }
+
+// camPad is the dead-zone padding: how many tiles of runway the player
+// keeps from the viewport edge before the camera pans.
+const camPad = 3
 
 // resizeDebounce coalesces streaks of WindowSizeMsgs into one world
 // regen (trailing edge).
@@ -103,6 +116,7 @@ func newGameScreen(id auth.Identity, pc game.PlayerView) GameScreen {
 		if c, ok := pc.(game.CombatView); ok {
 			g.world = c.WorldView(id.Fingerprint)
 		}
+		g.panCamera()
 		g.refreshTerrainCache()
 	}
 	return g
@@ -132,24 +146,39 @@ func (g GameScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if c := g.cv(); c != nil {
 				g.world = c.WorldView(g.fp)
 			}
+			g.panCamera()
 			g.refreshTerrainCache()
 		}
 		return g, stateTick()
 	case resizeDoneMsg:
-		// trailing edge of the resize streak: one regen per burst
+		// trailing edge of the resize streak: one regen per burst.
+		// The world only GROWS to fit a bigger pane — a smaller pane
+		// keeps the world and gets a panning viewport instead
 		g.resizeScheduled = false
 		if g.pc == nil {
 			return g, nil
 		}
 		if c := g.cv(); c != nil {
 			field := innerSize(g.width, g.height)
-			g.apply(c.Resize(g.fp, field.w, field.h))
+			nw, nh := field.w, field.h
+			if g.world.W > nw {
+				nw = g.world.W
+			}
+			if g.world.H > nh {
+				nh = g.world.H
+			}
+			g.apply(c.Resize(g.fp, nw, nh))
+			g.panCamera()
 			g.refreshTerrainCache()
 		}
 		return g, nil
 	case tea.WindowSizeMsg:
 		g.width = msg.Width
 		g.height = msg.Height
+		// the pane may have changed even when the world doesn't —
+		// a pan or slice re-cut happens with the next refresh
+		g.panCamera()
+		g.refreshTerrainCache()
 		// stash dims; the regen fires once the burst settles
 		g.pendingResizeW, g.pendingResizeH = msg.Width, msg.Height
 		if g.resizeScheduled {
@@ -260,6 +289,8 @@ func (g GameScreen) keyInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	} else if p, ok := g.pc.Move(g.fp, dx, dy); ok {
 		g.p = p
 	}
+	g.panCamera()
+	g.refreshTerrainCache()
 	return g, nil
 }
 
@@ -362,6 +393,8 @@ func (g *GameScreen) apply(r game.Result) {
 	if len(g.log) > 3 {
 		g.log = g.log[len(g.log)-3:]
 	}
+	g.panCamera()
+	g.refreshTerrainCache()
 }
 
 func (g GameScreen) View() string {
@@ -463,53 +496,115 @@ func (g GameScreen) renderVerify() string {
 	return Panel{Title: "Verify Now", Content: b.String()}.Render()
 }
 
-// renderField draws the terrain + dots; @ is the player, x an enemy
-// dot, $ the merchant — plain text so Overlay stays ANSI-correct.
-// The tile block is cached by world version (the player's @ composites
-// on top per frame — positions never hit the cache).
+// renderField draws the visible slice of the world (terrain + dots,
+// camera-windowed); @ is the player. The tile block is cached by
+// (version, camera window); the @ composites on top per frame —
+// positions never hit the cache.
 func (g GameScreen) renderField() string {
-	if g.terrainCache == "" || g.terrainVersion != g.world.Version {
-		return g.buildField() // no cache in this copy — miss is cheap
+	if g.terrainCache == "" {
+		vw, vh := g.fieldSize()
+		return g.buildField(vw, vh) // no cache in this copy — miss is cheap
 	}
-	// composite @ over the cached block (cheap line surgery)
+	// composite @ over the cached block (cheap line surgery), at the
+	// CAMERA-relative position
 	lines := strings.Split(g.terrainCache, "\n")
-	if g.p.Y < len(lines) {
-		row := []rune(lines[g.p.Y])
-		if g.p.X < len(row) && g.worldGlyph(g.p.X, g.p.Y) != '@' {
-			row[g.p.X] = '@'
-			lines[g.p.Y] = string(row)
+	rx, ry := g.p.X-g.camX, g.p.Y-g.camY
+	if ry >= 0 && ry < len(lines) {
+		row := []rune(lines[ry])
+		if rx >= 0 && rx < len(row) && g.worldGlyph(g.p.X, g.p.Y) != '@' {
+			row[rx] = '@'
+			lines[ry] = string(row)
 		}
 	}
 	return strings.Join(lines, "\n")
 }
 
-// refreshTerrainCache rebuilds the cached block when the world
-// version moved. Called ONLY from Update paths (never View — bubbletea
-// discards mutations made there).
+// fieldSize is the field pane's size in glyphs: what's left of the
+// terminal after the HUD strip, clamped to the world's own dims.
+// When the pane is at least as large as the world the viewport equals
+// the world (today's full-block behavior; the camera stays at 0,0).
+func (g GameScreen) fieldSize() (vw, vh int) {
+	s := innerSize(g.width, g.height)
+	vw, vh = s.w, s.h
+	if g.world.W > 0 && vw > g.world.W {
+		vw = g.world.W
+	}
+	if g.world.H > 0 && vh > g.world.H {
+		vh = g.world.H
+	}
+	return
+}
+
+// panCamera keeps the player's dot inside the viewport's padded dead
+// zone, moving the window as little as possible (no hard centering).
+// Worlds smaller than the pane pin the camera to 0,0. Called from the
+// Update paths only (View must not mutate state).
+func (g *GameScreen) panCamera() {
+	vw, vh := g.fieldSize()
+	axis := func(pos, size, cam, pane int) int {
+		if pane >= size {
+			return 0 // whole world visible
+		}
+		max := size - pane
+		if pos < cam+camPad {
+			cam = pos - camPad
+		}
+		if pos > cam+pane-1-camPad {
+			cam = pos - (pane - 1 - camPad)
+		}
+		return clamp(cam, 0, max)
+	}
+	g.camX = axis(g.p.X, g.world.W, g.camX, vw)
+	g.camY = axis(g.p.Y, g.world.H, g.camY, vh)
+}
+
+func clamp(v, lo, hi int) int {
+	if hi < lo {
+		return lo
+	}
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// refreshTerrainCache rebuilds the cached visible slice when the world
+// version moved OR the camera/pane moved (the cache key is the window,
+// not just the version). Called ONLY from Update paths (never View —
+// bubbletea discards mutations made there).
 func (g *GameScreen) refreshTerrainCache() {
-	if g.terrainCache == "" || g.terrainVersion != g.world.Version {
-		g.terrainCache = g.buildField()
+	vw, vh := g.fieldSize()
+	if g.terrainCache == "" || g.terrainVersion != g.world.Version ||
+		g.cacheCamX != g.camX || g.cacheCamY != g.camY ||
+		g.cacheW != vw || g.cacheH != vh {
+		g.terrainCache = g.buildField(vw, vh)
 		g.terrainVersion = g.world.Version
+		g.cacheCamX, g.cacheCamY, g.cacheW, g.cacheH = g.camX, g.camY, vw, vh
 	}
 }
 
-// buildField builds the version-cached world block (no @).
-func (g GameScreen) buildField() string {
-	h := g.world.H
-	ww := g.world.W
-	if h == 0 {
-		h = len(g.world.Tiles)
-	}
-	if ww == 0 {
-		if len(g.world.Tiles) > 0 {
-			ww = len([]rune(g.world.Tiles[0]))
-		} else {
-			ww = game.WorldW
+// buildField builds the version-cached VISIBLE world block (the
+// [camX,camX+vw) × [camY,camY+vh) slice of terrain with dots on top —
+// no @; the player composites per frame.
+func (g GameScreen) buildField(vw, vh int) string {
+	dots := map[[2]int]rune{}
+	for _, d := range g.world.Dots {
+		glyph := 'x' // enemy dot
+		if d.Kind == "npc" {
+			glyph = '$'
 		}
+		dots[[2]int{d.X, d.Y}] = glyph
 	}
 	var b strings.Builder
-	for y := 0; y < h; y++ {
-		for x := 0; x < ww; x++ {
+	for y := g.camY; y < g.camY+vh; y++ {
+		for x := g.camX; x < g.camX+vw; x++ {
+			if glyph, ok := dots[[2]int{x, y}]; ok {
+				b.WriteRune(glyph)
+				continue
+			}
 			b.WriteRune(g.worldGlyph(x, y))
 		}
 		b.WriteString("\n")
