@@ -38,7 +38,18 @@ type Player struct {
 	X, Y        int
 	Inventory   map[string]int
 
+	// townRef is the nested-room pointer: nil = walking the world;
+	// non-nil = inside a TownState (The X/Y are town-space then, and
+	// ReturnX/ReturnY hold the world tile the gate was stepped from).
+	townRef *townRef
+
 	lastSeen time.Time
+}
+
+// townRef is one player's nesting position (which town + their door).
+type townRef struct {
+	TownID           int64
+	ReturnX, ReturnY int
 }
 
 // PlayerView is the narrow interface the UI uses to play. Implemented
@@ -128,7 +139,7 @@ func (s *Server) Move(fingerprint string, dx, dy int) (Player, bool) {
 	if !ok {
 		return Player{}, false
 	}
-	return copyPlayer(s.interact(p, dx, dy)), true
+	return copyPlayer(s.lockedInteract(p, dx, dy)), true
 }
 
 // Interact implements CombatView: bumping into water blocks, the
@@ -141,7 +152,11 @@ func (s *Server) Interact(fp string, dx, dy int) Result {
 	if !ok {
 		return Result{}
 	}
-	r := Result{World: s.worldSnapshot(), Player: copyPlayer(s.interact(p, dx, dy))}
+	// order matters: the interact runs FIRST, then the view reads the
+	// nesting state (entering/exiting a town swaps the world in the
+	// same keystroke — the view must not lag a frame behind)
+	np := copyPlayer(s.lockedInteract(p, dx, dy))
+	r := Result{World: s.currentWorld(fp), Player: np}
 	if f, open := s.state.fights[fp]; open {
 		r.Fight = fightCopy(f)
 	}
@@ -152,14 +167,19 @@ func (s *Server) Interact(fp string, dx, dy int) Result {
 	return r
 }
 
-// lockedInteract mutates p for the bump attempt; assumes lock held.
-func (s *Server) interact(p *Player, dx, dy int) *Player {
+// interact mutates p for the bump attempt; assumes lock held.
+func (s *Server) lockedInteract(p *Player, dx, dy int) *Player {
 	w := s.state
 
 	// a live fight pins the player to the duel — only flee/kill frees
 	if f, open := w.fights[p.Fingerprint]; open && f != nil {
 		w.setEvent(p.Fingerprint, "the fight holds you — [f]lee to escape")
 		return p
+	}
+
+	// nested-room dispatch: inside a town, walk the town's grid
+	if p.townRef != nil {
+		return s.inTownInteract(p, dx, dy)
 	}
 
 	// the world is infinite: roaming past the served rect grows it a
@@ -169,6 +189,15 @@ func (s *Server) interact(p *Player, dx, dy int) *Player {
 	if !w.walkableAt(nx, ny) {
 		w.setEvent(p.Fingerprint, "the water is dark and deep — no crossing")
 		return p
+	}
+	// a 町 tile claimed by a village row is a DOOR — step onto it to
+	// enter; an unclaimed 町 stays paint (slice 1's walkable semantics)
+	if w.tileAt(nx, ny) == tileGate {
+		if tid := s.townAt(nx, ny); tid != 0 {
+			s.enterTown(p, tid)
+			return p
+		}
+		// no town claims it: keep walking (paint)
 	}
 	if kind, id := w.occupied(nx, ny); kind != "" {
 		if kind == "npc" {
@@ -243,7 +272,7 @@ func (s *Server) Command(fp string, cmd string, arg int) Result {
 	switch cmd {
 	case "noop", "attack", "cast", "flee":
 		if cmd == "noop" {
-			r := Result{Player: copyPlayer(p), World: s.worldSnapshot()}
+			r := Result{Player: copyPlayer(p), World: s.currentWorld(fp)}
 			if f, open := w.fights[fp]; open {
 				r.Fight = fightCopy(f)
 			}

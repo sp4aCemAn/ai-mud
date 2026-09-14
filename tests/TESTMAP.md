@@ -179,6 +179,35 @@ wipe; nothing product depends on it.
 - Tests: `TestMoveExploresPastOldBounds` (east+north roam, world grew),
   camera suite rides grew bounds, smoke suites green un-touched.
 
+## Towns (slice 2: nested rooms)
+
+- `internal/game/town.go`: towns are **nested coordinate spaces** built
+  from one authored `village` `world_objects` row (seeded `townRows`
+  registry at boot replay; the lazy `TownState` builds on first entry
+  and stays warm). `buildTown`: walled rect clamped from the row's
+  `radius` (never resized), a doorway pair on the west rim (Exit on the
+  rim painted `=`, Entry one inside, both land-forced), the row's
+  `data.npcs` roster projected to walkable `npc_town` dots.
+- `internal/game/player.go`: `Player.townRef` (townID + return coords)
+  — **per-player nesting**, no global swap: many players share a town's
+  read-only grid, `lockedInteract` dispatches through the town walk and
+  the world's `町` step enters only when a village row CLAIMS that tile
+  (an unclaimed 町 stays walkable paint, slice 1 semantics intact).
+- Exit: only by walking the doorway tile (walk-only; no key-quit).
+  Death resets the ref (towns aren't respawn anchors). WorldView (and
+  every Result payload via `currentWorld`) serves the TOWN rect for
+  town players; co-present players composite as `player_town` dots
+  (`+`), town NPCs as `npc_town` (`☺`).
+- `WorldSummary(fp)` gained `inTown/townId/townName` (the `/api/world`
+  readback scopes by `?fp`), the harness's "who's nested where" view.
+- Tests: `town_test.go` (deterministic layout + roster projection,
+  enter→exit round-trip restoring EXACT world coords, co-presence dot
+  + anti-stacking, fight-pin blocks entering); `TestTownEnterExitRoundtripPlacedFromTool`
+  guards the tool-path gap — **runtime-placed villages register and
+  paint their 町 door intrinsically** (`paintGate`, re-landed at every
+  boot replay too), so a village row is its own door without a second
+  authoring edit.
+
 ## Stored API-level smokes: `tests/smokes/`
 
 | File | What it drives |

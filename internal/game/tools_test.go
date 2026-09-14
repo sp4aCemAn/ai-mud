@@ -108,7 +108,7 @@ func TestPlaceObjectPersistsAndApplies(t *testing.T) {
 func TestTerrainEditVerb(t *testing.T) {
 	fs := newFakeStore(3)
 	s := fs.startWorld(t, 3)
-	sum := s.WorldSummary()
+	sum := s.WorldSummary("")
 	x, y := sum.SpawnX+1, sum.SpawnY
 
 	obj, err := s.TerrainEdit(TerrainEditSpec{Name: "marker fence", Tiles: []TileEdit{{X: x, Y: y, G: "T"}}})

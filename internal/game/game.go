@@ -54,6 +54,12 @@ type Server struct {
 	// objects is the tool-authored placements this server owns: the
 	// persisted world's rows at boot plus every tool-placed row since.
 	objects []storage.WorldObject
+
+	// towns: nested-room spaces lazily built from authored village
+	// rows (townRows is the registry seeded at boot replay; TownState
+	// builds on first entry and stays warm).
+	townRows map[int64]storage.WorldObject
+	towns    map[int64]*TownState
 }
 
 func NewServer() *Server {

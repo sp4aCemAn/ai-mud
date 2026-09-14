@@ -58,7 +58,7 @@ func TestNewServerWorldReplaysObjects(t *testing.T) {
 	}
 
 	// summary agrees
-	sum := s.WorldSummary()
+	sum := s.WorldSummary("")
 	if sum.MerchantX != s.state.npcDot.X || sum.EnemyCount < 1 {
 		t.Fatalf("summary mismatch: %+v", sum)
 	}
@@ -114,7 +114,7 @@ func TestResizeKeepsPersistedContent(t *testing.T) {
 		},
 	}
 	s := NewServerWorld(w)
-	sum := s.WorldSummary()
+	sum := s.WorldSummary("")
 	if !hasEnemyNamed(sum, "held group") {
 		t.Fatal("authored group should be present at boot")
 	}
@@ -122,7 +122,7 @@ func TestResizeKeepsPersistedContent(t *testing.T) {
 
 	// resize to a bigger board: content must come back, same name
 	s.Resize("fp", WorldW+10, WorldH+4)
-	sum = s.WorldSummary()
+	sum = s.WorldSummary("")
 	if !hasEnemyNamed(sum, "held group") {
 		t.Fatal("authored group must survive resize replay")
 	}
@@ -132,7 +132,7 @@ func TestResizeKeepsPersistedContent(t *testing.T) {
 
 	// a second resize keeps it as well (seed replay is idempotent)
 	s.Resize("fp", WorldW-8, WorldH-2)
-	sum = s.WorldSummary()
+	sum = s.WorldSummary("")
 	if !hasEnemyNamed(sum, "held group") {
 		t.Fatal("authored group must survive repeated resizes")
 	}

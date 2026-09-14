@@ -1,0 +1,53 @@
+#!/usr/bin/expect -f
+set timeout 25
+log_user 0
+set stty_init "rows 30 columns 100"
+spawn ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2525 walker@127.0.0.1
+expect { "press enter to continue" { sleep 0.4; send "\r" } timeout { puts "\nFAIL: guest gate"; exit 1 } }
+expect { "user name" { sleep 0.3; send "\r" } timeout { puts "\nFAIL: user gate"; exit 1 } }
+sleep 0.5
+expect { -re "Join World" {} timeout { puts "\nFAIL: landing"; exit 1 } }
+send "1"
+expect { -re "hp" {} timeout { puts "\nFAIL: game screen"; exit 1 } }
+sleep 4
+# read the HUD like ui_smoke does (drain frames, keep the last)
+log_user 1
+set px ""; set py ""; set tries 0
+while { $tries < 15 } {
+    log_user 1
+    expect {
+        -re {(-?\[0-9\]+),(-?\[0-9\]+)} {
+            set px $expect_out(1,string)
+            set py $expect_out(2,string)
+        }
+        timeout { break }
+    }
+    incr tries
+    sleep 0.3
+}
+if { $px eq "" } { puts "\nFAIL: spawn coords"; exit 1 }
+puts "SPAWN $px $py"
+# spawn is (48,11); the ashfen door sits at (30,12): west 18, south 1
+set hSteps [expr { [string trimleft $px "-"] - 30 }]
+for { set i 0 } { $i < $hSteps } { incr i } { send "h"; after 80 }
+send "j"; after 200
+sleep 2
+# final read: the walker must stand NEXT to the gate (30,12)
+set fx ""; set fy ""
+set tries 0
+while { $tries < 12 } {
+    expect {
+        -re {(-?\[0-9\]+),(-?\[0-9\]+)} { set px $expect_out(1,string); set py $expect_out(2,string) }
+        timeout { break }
+    }
+    incr tries
+    sleep 0.3
+}
+puts "WALKED $px $py"
+if { $px ne "31" } { puts "\nNOT_NEAR_GATE px=$px fy=$fy"; exit 1 }
+send "l"
+expect {
+    -re "you enter ashfen" { puts "\nENTERED" }
+    timeout { puts "\nENTER_FAILED"; exit 1 }
+}
+exit 0

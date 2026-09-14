@@ -124,6 +124,13 @@ func (s *Server) PlaceObject(spec ObjectSpec) (ObjectSummary, error) {
 		row.ID = s.nextEphemeral
 	}
 	s.objects = append(s.objects, row)
+	// villages become towns the moment the row lands — and their
+	// doorway tile paints intrinsically (the 町 is the row's door mark,
+	// re-applied at every boot too)
+	if spec.Kind == storage.ObjectVillage {
+		s.registerTown(row)
+		s.paintGate(row)
+	}
 	s.applyObject(row, x, y)
 
 	summary := ObjectSummary{ID: row.ID, Kind: row.Kind, Name: row.Name, X: x, Y: y, Radius: row.Radius}
@@ -180,6 +187,15 @@ func (s *Server) UpdateObject(id int64, patch ObjectPatch) (ObjectSummary, error
 	}
 	s.objects[idx] = row
 
+	// village edits reshape (or retire) their town; a warm TownState
+	// rebuilds lazily from the new row
+	if row.Kind == storage.ObjectVillage {
+		s.registerTown(row)
+	} else if oldRow.Kind == storage.ObjectVillage {
+		delete(s.townRows, row.ID)
+		delete(s.towns, row.ID)
+	}
+
 	if s.loaded != nil {
 		// replay from the record: deterministic terrain, fresh content
 		s.replayContentLocked()
@@ -216,6 +232,10 @@ func (s *Server) RemoveObject(id int64) error {
 		}
 	}
 	s.objects = append(s.objects[:idx], s.objects[idx+1:]...)
+	if row.Kind == storage.ObjectVillage {
+		delete(s.townRows, row.ID)
+		delete(s.towns, row.ID)
+	}
 
 	if s.loaded != nil {
 		s.replayContentLocked() // live form drops with the row

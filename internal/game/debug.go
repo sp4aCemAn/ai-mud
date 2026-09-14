@@ -30,3 +30,25 @@ func flatten(s *Server) {
 // (ui drives a real server): empty walkable field, no dots, centered
 // spawn. Gameplay never calls it.
 func (s *Server) DebugFlattenWorld() { flatten(s) }
+
+// DebugSetPlayer is the cross-package teleport hook: clones p into the
+// server's player slot. Gameplay never calls it.
+func (s *Server) DebugSetPlayer(fp string, p Player) {
+	s.playersMu.Lock()
+	defer s.playersMu.Unlock()
+	if old := s.players[fp]; old != nil {
+		p.lastSeen = old.lastSeen
+	}
+	s.players[fp] = &p
+}
+
+// DebugTownRef exposes the fingerprint's nesting state (cross-package
+// assertions; gameplay never calls it).
+func (s *Server) DebugTownRef(fp string) *townRef {
+	s.playersMu.Lock()
+	defer s.playersMu.Unlock()
+	if p := s.players[fp]; p != nil {
+		return p.townRef
+	}
+	return nil
+}

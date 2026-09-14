@@ -609,8 +609,13 @@ func (g GameScreen) buildField(vw, vh int) string {
 	dots := map[[2]int]rune{}
 	for _, d := range g.world.Dots {
 		glyph := 'x' // enemy dot
-		if d.Kind == "npc" {
+		switch d.Kind {
+		case "npc":
 			glyph = '$'
+		case "npc_town":
+			glyph = '☺' // a town NPC's dot (slice 3 shades by role)
+		case "player_town":
+			glyph = '+' // a co-present player's dot in your town view
 		}
 		dots[[2]int{d.X, d.Y}] = glyph
 	}

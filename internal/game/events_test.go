@@ -68,12 +68,12 @@ func TestSpawnEnemyGroupAnchoredAndRandom(t *testing.T) {
 	}
 
 	// the world version moved (renderers pick it up next frame)
-	before := s.WorldSummary().Version
+	before := s.WorldSummary("").Version
 	des := s.DespawnEnemy(e.ID)
 	if !des {
 		t.Fatal("despawn of a live group must report true")
 	}
-	if s.WorldSummary().Version <= before {
+	if s.WorldSummary("").Version <= before {
 		t.Fatal("despawn must bump the render version")
 	}
 	after := s.Enemies()
@@ -108,7 +108,7 @@ func TestSpawnRejectsAndAcceptsWaterAwareAnchor(t *testing.T) {
 
 func TestAnnounceAndWorldSummary(t *testing.T) {
 	s := NewServer()
-	sum := s.WorldSummary()
+	sum := s.WorldSummary("")
 	if sum.W == 0 || sum.H == 0 || sum.EnemyCount == 0 {
 		t.Fatalf("summary should see a populated world: %+v", sum)
 	}

@@ -124,6 +124,14 @@ func (s *Server) replayContentReared(base uint64) {
 	// regen happens anymore; the record's dims were the BOOT rect.
 	w.enemies = map[int]*Enemy{}
 	w.npcDot = Dot{X: -1, Y: -1}
+
+	// villages register as towns (the lazy TownState builds on entry)
+	for _, o := range s.objects {
+		if o.Kind == storage.ObjectVillage {
+			s.registerTown(o)
+			s.paintGate(o) // the door mark is intrinsic to the village row
+		}
+	}
 	// the record's spawn only wins when it's still walkable on the
 	// chunk plane (the tile look changed when the plane replaced the
 	// finite generator — a stale spawn coordinate may be water now)

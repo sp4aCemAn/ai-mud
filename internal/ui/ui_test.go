@@ -568,3 +568,61 @@ func TestGlyphCellWidth(t *testing.T) {
 		}
 	}
 }
+
+// TestUIDrivesTownDoor drives the real UI stack through a claimed
+// 町 door: the world view swaps for the town pane, and the '='
+// doorway restores the world view with exact return coords.
+func TestUIDrivesTownDoor(t *testing.T) {
+	r, world := gameScreenAfterJoin(t)
+	gs := activeScreen(r.(Router)).(GameScreen)
+	spawnX, spawnY := gs.world.SpawnX, gs.world.SpawnY
+
+	// author a village row east of spawn; the door paints intrinsically
+	doorX, doorY := spawnX+2, spawnY
+	obj, err := world.PlaceObject(game.ObjectSpec{
+		Kind: "village", Name: "rounder hold", Radius: 4,
+		X: &doorX, Y: &doorY,
+	})
+	if err != nil {
+		t.Fatalf("place village: %v", err)
+	}
+	if obj.X != doorX || obj.Y != doorY {
+		t.Fatalf("door coords: %+v", obj)
+	}
+	if world.TileAt(doorX, doorY) != game.TileGate {
+		t.Fatal("the village's 町 did not paint intrinsically")
+	}
+	_ = gs
+
+	// position the player adjacent (movement is movement-tests' job)
+	if p, ok := world.State("SHA256:testfp"); ok {
+		p.X, p.Y = doorX-1, doorY
+		world.DebugSetPlayer("SHA256:testfp", p)
+	} else {
+		t.Fatal("player state")
+	}
+	// step EAST onto the door
+	r = drive(t, r, "l")
+	gs = activeScreen(r.(Router)).(GameScreen)
+	if world.DebugTownRef("SHA256:testfp") == nil {
+		t.Fatal("the claimed gate should nest the player")
+	}
+	// world coords: the town's materialized inside coords
+	insideView := gs.world
+	if insideView.W >= game.WorldW || insideView.H >= game.WorldH {
+		t.Fatalf("town view didn't swap: %dx%d", insideView.W, insideView.H)
+	}
+
+	// walk WEST from the entry: over the '=' doorway → docked back out
+	r = drive(t, r, "h")
+	gs = activeScreen(r.(Router)).(GameScreen)
+	if world.DebugTownRef("SHA256:testfp") != nil {
+		t.Fatal("the doorway should clear the nesting")
+	}
+	if gs.p.X != doorX-1 || gs.p.Y != doorY {
+		t.Fatalf("return coords: (%d,%d) want (%d,%d)", gs.p.X, gs.p.Y, doorX-1, doorY)
+	}
+	if world.WorldSummary("SHA256:testfp").InTown {
+		t.Fatal("summary must report the outside truth again")
+	}
+}

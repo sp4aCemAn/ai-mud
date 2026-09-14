@@ -138,6 +138,9 @@ type WorldSummary struct {
 	SpawnX      int      `json:"spawnX"`
 	SpawnY      int      `json:"spawnY"`
 	Version     uint64   `json:"version"`
+	InTown      bool     `json:"inTown"` // will read: who's nested where
+	TownID      int64    `json:"townId,omitempty"`
+	TownName    string   `json:"townName,omitempty"`
 	EnemyCount  int      `json:"enemyCount"`
 	EnemyNames  []string `json:"enemyNames"`
 	MerchantX   int      `json:"merchantX"`
@@ -145,8 +148,16 @@ type WorldSummary struct {
 	PlayerCount int      `json:"playerCount"`
 }
 
+// TileAt returns one absolute tile's data glyph (operator/debug reads;
+// the infinite plane's tiles render through OriginX/OriginY offsets).
+func (s *Server) TileAt(x, y int) rune {
+	s.playersMu.Lock()
+	defer s.playersMu.Unlock()
+	return s.state.tileAt(x, y)
+}
+
 // WorldSummary snapshots the current world for tooling and smoke tests.
-func (s *Server) WorldSummary() WorldSummary {
+func (s *Server) WorldSummary(fp string) WorldSummary {
 	s.playersMu.Lock()
 	defer s.playersMu.Unlock()
 	w := s.state
@@ -157,6 +168,13 @@ func (s *Server) WorldSummary() WorldSummary {
 		Version:   w.version,
 		MerchantX: w.npcDot.X, MerchantY: w.npcDot.Y,
 		PlayerCount: len(s.players),
+	}
+	if p := s.players[fp]; p != nil && p.townRef != nil {
+		out.InTown = true
+		out.TownID = p.townRef.TownID
+		if t := s.towns[p.townRef.TownID]; t != nil {
+			out.TownName = t.Name
+		}
 	}
 	out.EnemyNames = make([]string, 0, len(w.enemies))
 	for _, e := range w.enemies {

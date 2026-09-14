@@ -321,7 +321,9 @@ func formatEvent(events *[]string, line string) {
 	*events = append(*events, line)
 }
 
-// respawn drops a dead player back at spawn, poorer.
+// respawn drops a dead player back at spawn, poorer. Town-nested
+// players die in the world door's coords: the ref clears with them
+// (the town's doorway isn't a respawn anchor — that's the world's).
 func (s *Server) respawn(w *worldState, p *Player) {
 	p.X = w.spawnX
 	p.Y = w.spawnY
@@ -329,6 +331,10 @@ func (s *Server) respawn(w *worldState, p *Player) {
 	p.Mana = p.MaxMana
 	half := p.Coins / 2
 	p.Coins -= half
+	if p.townRef != nil {
+		p.townRef = nil
+		w.setEvent(p.Fingerprint, "you fell inside a town — the dark pulls you to the spawn")
+	}
 }
 
 // checkLevel rolls XP thresholds and hits the player up.
@@ -372,6 +378,19 @@ func (s *Server) worldSnapshot() World {
 func (s *Server) WorldView(fp string) World {
 	s.playersMu.Lock()
 	defer s.playersMu.Unlock()
+	// nested-room dispatch: a town player's view is the TOWN rect
+	if p := s.players[fp]; p != nil && p.townRef != nil {
+		return s.TownView(fp, p.townRef.TownID)
+	}
+	return s.worldSnapshot()
+}
+
+// currentWorld: nested dispatch for Result payloads (interact, fight,
+// store paths) — the same TownView seam WorldView uses.
+func (s *Server) currentWorld(fp string) World {
+	if p := s.players[fp]; p != nil && p.townRef != nil {
+		return s.TownView(fp, p.townRef.TownID)
+	}
 	return s.worldSnapshot()
 }
 

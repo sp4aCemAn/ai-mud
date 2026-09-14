@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/sp4aceman/ai-mud/internal/game"
 )
@@ -63,9 +64,10 @@ func notFound(what string) error {
 func toolRoutes(gs *game.Server) http.Handler {
 	r := http.NewServeMux()
 
-	// GET /api/world → live summary (dims, dots, version, players)
+	// GET /api/world?fp=<fingerprint> → live summary (dims, dots,
+	// version, players; fp scopes the inTown nesting view)
 	r.HandleFunc("GET /api/world", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, gs.WorldSummary())
+		writeJSON(w, http.StatusOK, gs.WorldSummary(r.URL.Query().Get("fp")))
 	})
 
 	// GET /api/world/enemies → the live hostile groups (readback)
@@ -198,6 +200,19 @@ func toolRoutes(gs *game.Server) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusCreated, obj)
+	})
+
+	// GET /api/world/tile?x=&y= → one absolute tile's data glyph
+	// (operator/verification tool for the infinite plane)
+	r.HandleFunc("GET /api/world/tile", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		x, err1 := strconv.Atoi(q.Get("x"))
+		y, err2 := strconv.Atoi(q.Get("y"))
+		if err1 != nil || err2 != nil {
+			failJSON(w, &httpStatusError{http.StatusBadRequest, "x and y must be ints"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"tile": string(rune(gs.TileAt(x, y)))})
 	})
 
 	return r

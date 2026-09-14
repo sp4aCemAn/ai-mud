@@ -59,11 +59,16 @@ func (s *Server) absorbInto(nx, ny, dx, dy int) {
 
 	// absolute coordinates NEVER shift — the rect moves around the
 	// world; players, enemies and dots keep their tile positions
-	// authored terrain edits survive the rebuild: re-apply on top
+	// authored terrain edits survive the rebuild: re-apply on top;
+	// villages re-paint their 町 door the same way (the gate mark is
+	// row-derived state that lives in memory, not an edit row)
 	if s.loaded != nil {
 		for _, o := range s.objects {
-			if o.Kind == storage.ObjectEdit {
+			switch o.Kind {
+			case storage.ObjectEdit:
 				s.applyTerrainEdit(o)
+			case storage.ObjectVillage:
+				s.paintGate(o)
 			}
 		}
 	}
