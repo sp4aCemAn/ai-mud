@@ -39,7 +39,8 @@ type World struct {
 // in the zoomed-out view; the merchant renders at their own tile.
 type Dot struct {
 	X, Y  int
-	Kind  string // "enemy" | "npc"
+	Kind  string // "enemy" | "npc" | "npc_town" | "player_town"
+	Role  string // the town roster's npc type ("innkeep" | "villager" | ...)
 	Count int
 	Name  string
 	ObjID int64 // authored row (tool placements; 0 = autoplay dot)

@@ -60,6 +60,12 @@ type Server struct {
 	// builds on first entry and stays warm).
 	townRows map[int64]storage.WorldObject
 	towns    map[int64]*TownState
+
+	// talks: per-fingerprint open conversation sessions (slice 3)
+	talks map[string]*Talk
+
+	// narr: the docdb conversation layer (nil = payload + canned only)
+	narr NarrStore
 }
 
 func NewServer() *Server {

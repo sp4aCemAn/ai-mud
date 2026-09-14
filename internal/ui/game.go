@@ -48,6 +48,7 @@ type GameScreen struct {
 	world game.World
 	fight *game.Fight // live duel (nil = none)
 	shop  *game.Shop  // store overlay (nil = closed)
+	talk  *game.Talk  // open conversation (nil = none; slice 3)
 	inv   bool        // pack window open
 	log   []string    // latest world event lines
 
@@ -210,6 +211,18 @@ func (g GameScreen) keyInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case g.verify:
 		return g.verifyInput(msg)
+
+	case g.talk != nil:
+		// conversations are modal: enter advances, esc walks away
+		if c != nil {
+			switch msg.String() {
+			case "enter":
+				g.applyTalk(c.Command(g.fp, "talk-advance", 0))
+			case "esc":
+				g.applyTalk(c.Command(g.fp, "talk-close", 0))
+			}
+		}
+		return g, nil
 
 	case g.shop != nil:
 		if c != nil {
@@ -389,12 +402,24 @@ func (g *GameScreen) apply(r game.Result) {
 	g.world = r.World
 	g.fight = r.Fight
 	g.shop = r.Shop
+	if r.Talk != nil {
+		g.talk = r.Talk
+	}
 	g.log = append(g.log, r.Events...)
 	if len(g.log) > 3 {
 		g.log = g.log[len(g.log)-3:]
 	}
 	g.panCamera()
 	g.refreshTerrainCache()
+}
+
+// applyTalk mirrors the talk path (enter/esc keys): a nil Talk in the
+// reply means the server-side session closed → the overlay clears.
+func (g *GameScreen) applyTalk(r game.Result) {
+	g.apply(r)
+	if r.Talk == nil {
+		g.talk = nil
+	}
 }
 
 func (g GameScreen) View() string {
@@ -409,6 +434,8 @@ func (g GameScreen) View() string {
 		hintTxt = "[a]ttack · [c]ast · [f]lee"
 	case g.shop != nil:
 		hintTxt = "1-4 buy · esc leave"
+	case g.talk != nil:
+		hintTxt = "[enter] next line · esc walk away"
 	case g.inv:
 		hintTxt = "u/m use · esc close"
 	}
@@ -443,10 +470,31 @@ func (g GameScreen) View() string {
 		content = Overlay(content, renderShop(g.shop))
 	case g.fight != nil:
 		content = Overlay(content, renderFight(g.fight))
+	case g.talk != nil:
+		content = Overlay(content, renderTalk(g.talk))
 	case g.inv:
 		content = Overlay(content, renderPack(g.p))
 	}
 	return content
+}
+
+// renderTalk is the conversation overlay: the NPC's line, the quest
+// marker when the line carries one, and the modal hints.
+func renderTalk(t *game.Talk) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n\n", t.Name)
+	if t.Line < len(t.Lines) {
+		b.WriteString(hint(t.Lines[t.Line].Text) + "\n")
+		if t.Lines[t.Line].Quest != nil {
+			b.WriteString("the giver's eyes harden — a task follows\n")
+		}
+	}
+	if len(t.Lines) <= 1 {
+		b.WriteString(" [enter] finish · esc walk away")
+	} else {
+		fmt.Fprintf(&b, " [enter] next (%d/%d) · esc walk away", t.Line+1, len(t.Lines))
+	}
+	return Panel{Title: "「" + t.TownName + "」", Content: b.String()}.Render()
 }
 
 // innerSize converts a terminal size into a world size: what's left

@@ -1,6 +1,7 @@
 package game
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -44,6 +45,10 @@ type TownState struct {
 	TW, TH int
 	Tiles  []string
 	Dots   []Dot // NPC roster (shared; never roams)
+
+	// NPCConvo: authored per-NPC talk lines (keyed by the npc NAME;
+	// populated from the row's `convo` entries)
+	NPCConvo map[string][]TalkLine
 
 	EntryX, EntryY int // inside the door (where you materialize)
 	ExitX, ExitY   int // the doorway tile: stepping back through it exits
@@ -106,16 +111,19 @@ func buildTown(o storage.WorldObject) *TownState {
 	}
 
 	// NPC roster from the payload:
-	// {"npcs":[{"type":"innkeep","name":"...","x":n,"y":n}]}
+	// {"npcs":[{"type":"innkeep","name":"...","x":n,"y":n,
+	//           "convo":[{"text":"...","quest":{...}}]}]}
 	var payload struct {
 		NPCs []struct {
-			Type string `json:"type"`
-			Name string `json:"name"`
-			X    int    `json:"x"`
-			Y    int    `json:"y"`
+			Type  string     `json:"type"`
+			Name  string     `json:"name"`
+			X     int        `json:"x"`
+			Y     int        `json:"y"`
+			Convo []TalkLine `json:"convo"`
 		} `json:"npcs"`
 	}
 	_ = json.Unmarshal(o.Payload, &payload)
+	t.NPCConvo = make(map[string][]TalkLine)
 	for _, npc := range payload.NPCs {
 		name := npc.Name
 		if name == "" {
@@ -126,7 +134,10 @@ func buildTown(o storage.WorldObject) *TownState {
 			x, y = townFreeSpot(t, npc.X, npc.Y)
 		}
 		t.Dots = append(t.Dots, Dot{X: x, Y: y, Kind: "npc_town",
-			Name: name, Count: 1})
+			Role: npc.Type, Name: name, Count: 1})
+		if len(npc.Convo) > 0 {
+			t.NPCConvo[name] = npc.Convo
+		}
 	}
 
 	// guarantee the doors: entry + the tiles east of the exit stay land
@@ -254,22 +265,69 @@ func (s *Server) enterTown(p *Player, townID int64) {
 	slog.Info("player entered town", "town", t.Name, "fp", p.Fingerprint)
 }
 
-// leaveTown is Alltag-unreachable (inTownInteract owns the door);
-// kept for direct tests / future triggers (friend-pull, quest portals).
-func (s *Server) leaveTown(p *Player) {
-	r := p.townRef
-	if r == nil {
-		return
+// --- slice 3: talk + narration ------------------------------------------------
+
+// NarrStore is the narration-document layer (the harness's authored
+// talk lines in the docdb). Wired generically so any backend (and the
+// defer Loaded nil path) fits; *storage.Document satisfies it with a
+// small adapter — PutNarrDoc/NarrDocByKey live on *Document.
+type NarrStore interface {
+	PutNarrDoc(ctx context.Context, key string, v any) error
+	NarrDocByKey(ctx context.Context, key string, v any) error
+}
+
+// DocumentNarrStore adapts the *storage.Document into NarrStore
+// (interface-conformance sugar: the methods exist with the same
+// shapes, so this keeps a single point of truth for the wiring).
+func AttachDocumentNarr(s *Server, d interface {
+	PutNarrDoc(ctx context.Context, key string, v any) error
+	NarrDocByKey(ctx context.Context, key string, v any) error
+}) {
+	s.AttachNarrStore(d)
+}
+
+// AttachNarrStore wires the conversation read path; nil = the payload
+// and canned pool only (the docdb layer is optional).
+func (s *Server) AttachNarrStore(store NarrStore) {
+	s.narr = store
+	if s.narr != nil {
+		slog.Info("narration store attached (docdb conversations live)")
 	}
-	t := s.townOrBuild(r.TownID)
-	p.X, p.Y = r.ReturnX, r.ReturnY
-	p.townRef = nil
-	s.state.setEvent(p.Fingerprint, fmt.Sprintf("the gate swings you back out of %s", t.Name))
+}
+
+// TalkLine is one line of conversation; the OPENING line of an NPC's
+// talk may lead with a quest spec (the quest grant lands on close).
+type TalkLine struct {
+	Text  string     `json:"text"`
+	Quest *QuestSpec `json:"quest,omitempty"`
+}
+
+// QuestSpec rides a talk's final line: a bounty the giver offers.
+type QuestSpec struct {
+	Title       string `json:"title"`
+	Objective   string `json:"objective"` // "kill" for now
+	Target      string `json:"target"`    // the enemy group name
+	Count       int    `json:"count"`     // how many kills
+	RewardCoins int    `json:"reward_coins"`
+	RewardXP    int    `json:"reward_xp"`
+}
+
+// Talk is the UI-facing conversation state (mirrors Fight/Shop).
+type Talk struct {
+	TownName string     `json:"town"`
+	Name     string     `json:"npc"`
+	Role     string     `json:"role"`
+	Lines    []TalkLine `json:"lines"`
+	Line     int        `json:"-"`
+}
+
+// narrKey is the docdb namespace: narr:<world>:<town>:<npc>.
+func narrKey(worldID, townID int64, npc string) string {
+	return fmt.Sprintf("narr:%d:%d:%s", worldID, townID, npc)
 }
 
 // inTownInteract: the movement inside a nested town. Same bump
-// semantics as the world: NPC bump opens slice 3's talk (a placeholder
-// log line for now), the doorway tile restores the world view.
+// semantics as the world, plus slice 3: the NPC bump OPENS A TALK.
 func (s *Server) inTownInteract(p *Player, dx, dy int) *Player {
 	r := p.townRef
 	t := s.townOrBuild(r.TownID)
@@ -286,11 +344,10 @@ func (s *Server) inTownInteract(p *Player, dx, dy int) *Player {
 		w.setEvent(p.Fingerprint, "the house wall blocks your way")
 		return p
 	}
-	// NPC bump = talk (slice 3's overlay lands here; the log nudge for now)
+	// NPC bump = open the talk session (the UI's overlay mirrors it)
 	for i := range t.Dots {
-		d := &t.Dots[i]
-		if d.X == nx && d.Y == ny {
-			w.setEvent(p.Fingerprint, fmt.Sprintf("%s nods at you — words come next visit", d.Name))
+		if t.Dots[i].X == nx && t.Dots[i].Y == ny {
+			s.openTalk(p, t, i)
 			return p
 		}
 	}
@@ -318,9 +375,7 @@ func (s *Server) townOccupiedByPlayer(t *TownState, fp string, x, y int) string 
 
 // TownView builds the town-rect snapshot (same World contract as the
 // outside view — the UI renders it with the same machinery; towns are
-// small and fixed, so the camera just centers it). Co-present players
-// compositing dots come with slice 3's roster pass; for now the town's
-// NPC roster is the full dot set.
+// small and fixed, so the camera just centers it, co-presence included).
 func (s *Server) TownView(fp string, townID int64) World {
 	t := s.townOrBuild(townID)
 	if t == nil {
@@ -338,30 +393,28 @@ func (s *Server) TownView(fp string, townID int64) World {
 	return out
 }
 
-// outDots renders the co-presence dots: every OTHER player in this town
-// shows up as their own marker (the shared-room effect).
+// outDots renders the co-presence dots: every OTHER player in this
+// town shows up as their own marker (the shared-room effect).
 func outDots(s *Server, fp string, t *TownState) []Dot {
 	var others []Dot
-	for id, p := range s.players {
-		if id == fp || p.townRef == nil || p.townRef.TownID != t.ID {
+	for id, other := range s.players {
+		if id == fp || other.townRef == nil || other.townRef.TownID != t.ID {
 			continue
 		}
-		others = append(others, Dot{X: p.X, Y: p.Y, Kind: "player_town", Count: 1, Name: p.Name})
+		others = append(others, Dot{X: other.X, Y: other.Y,
+			Kind: "player_town", Count: 1, Name: other.Name})
 	}
 	return others
 }
 
-// townTickVersion folds the town's mutation counter into a version —
-// town tiles never change in this slice, so a stable base + co-presence
-// bumps is enough.
+// townVersion folds the co-presence count into a stable version base —
+// town tiles never change in this slice; the roster re-count nudges
+// the version so player dots refresh when someone joins/leaves.
 func (s *Server) townVersion(t *TownState) uint64 {
 	base := uint64(t.TW)*1_000_000 + uint64(t.TH)*1_000
-	// co-presence: the roster re-count nudges the version so player dots
-	// refresh when someone joins/leaves mid-view
 	n := 0
-	for id := range s.players { // cheap; towns are player-sized
-		p := s.players[id]
-		if p.townRef != nil && p.townRef.TownID == t.ID {
+	for id := range s.players {
+		if p := s.players[id]; p.townRef != nil && p.townRef.TownID == t.ID {
 			n++
 		}
 	}

@@ -226,6 +226,8 @@ type Result struct {
 	World  World
 	Fight  *Fight // current combat, nil when out of it
 	Shop   *Shop  // open store, nil when none
+	Talk   *Talk  // open conversation, nil when none
+	Quests []Quest
 	Events []string
 }
 
@@ -287,6 +289,7 @@ func (s *Server) runFight(fp, action string, w *worldState, p *Player) ([]string
 		}
 		res = append(res, events...)
 		p.checkLevel(w.rnd, &events)
+		s.questKill(p, f.Name) // slice 3: bounty progress on the group's name
 		enemy.respawnAt = time.Now().Add(60 * time.Second)
 		enemy.HP = 0
 		w.changed()

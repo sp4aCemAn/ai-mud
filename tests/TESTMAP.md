@@ -206,7 +206,30 @@ wipe; nothing product depends on it.
   guards the tool-path gap — **runtime-placed villages register and
   paint their 町 door intrinsically** (`paintGate`, re-landed at every
   boot replay too), so a village row is its own door without a second
-  authoring edit.
+  authoring edit; `TestGatesSurviveGrowth` pins doors surviving the
+  absorb rebuild (the ghost: boot-painted doors vanished when the
+  plane grew).
+
+## Slice 3: NPC talks + quests (in `internal/game/talk.go`)
+
+- Bumping a town NPC opens a **talk session** (`Server.talks` keyed by
+  fingerprint; the Result channel mirrors fights/shops — `Result.Talk`
+  plus the quest book). Lines resolve: **docdb** (`narr:<world>:<town>:<npc>`
+  documents via `NarrStore`/`PutNarrDoc`/`NarrDocByKey`; main.go wires
+  `store.Document`) → the row payload's per-NPC `convo` entries → the
+  **canned pool** (`cannedConvo`, role-flavored — the never-blocking
+  degradation layer).
+- UI: `g.talk` mirrors the session; the overlay shows the line +
+  `[enter] next (n/m) · esc walk away`; the last line may carry a
+  quest → the grant lands on the close.
+- **Bounties**: `Player.quests` tracks kill-targets; `questKill` hooks
+  the combat kill site (progress `n/m` events, completion pays
+  coins+xp with level progression through `checkLevel`); one copy per
+  title, only matching target names progress.
+- Tests: `talk_test.go` — canned fallback flow, payload convo quest
+  grant, kill progress/complete with no stray-kill pollution, and
+  docdb overrides the payload (fake store). `TestUIDrivesTownDoor`
+  (ui) still drives the real door path through the full pane stack.
 
 ## Stored API-level smokes: `tests/smokes/`
 

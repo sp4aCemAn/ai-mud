@@ -121,6 +121,34 @@ func deleteDoc(ctx context.Context, qx docWriter, key string) error {
 	return nil
 }
 
+// --- narration documents (the AI harness's authored talk layer) -------------
+//
+// Layout inside the jsonb-documents table:
+//
+//	narr:... → {"lines":[{"text":...,"quest":{...}},...]}
+//
+// Keys are caller-owned; the game builds narr:<town>:<npc>.
+
+// PutNarrDoc upserts one narration document by explicit key.
+func (d *Document) PutNarrDoc(ctx context.Context, key string, v any) error {
+	if err := d.avail(); err != nil {
+		return err
+	}
+	raw, err := marshalDoc(v)
+	if err != nil {
+		return err
+	}
+	return upsertDoc(ctx, d.pool, key, raw)
+}
+
+// NarrDocByKey fetches one narration document; ErrNotFound when absent.
+func (d *Document) NarrDocByKey(ctx context.Context, key string, v any) error {
+	if err := d.avail(); err != nil {
+		return err
+	}
+	return fetchDoc(ctx, d.pool, key, v)
+}
+
 func fetchDoc(ctx context.Context, qx docQuerier, key string, v any) error {
 	var raw string
 	err := qx.QueryRow(ctx, `SELECT doc::text FROM documents WHERE key = $1`, key).Scan(&raw)

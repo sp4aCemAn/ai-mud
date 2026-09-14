@@ -72,6 +72,9 @@ func main() {
 				Objects: objs,
 			})
 			gameServer.AttachWorldStore(store.Relational, w.ID)
+			if doc, ok := store.Document.(*storage.Document); ok {
+				gameServer.AttachNarrStore(doc)
+			}
 		}
 	} else if !errors.Is(err, storage.ErrNotFound) {
 		slog.Warn("active world lookup failed, using seed flow", "err", err)

@@ -43,6 +43,9 @@ type Player struct {
 	// ReturnX/ReturnY hold the world tile the gate was stepped from).
 	townRef *townRef
 
+	// quests: bounties granted by talk closings (slice 3)
+	quests []Quest
+
 	lastSeen time.Time
 }
 
@@ -117,6 +120,7 @@ func (s *Server) Leave(fingerprint string) {
 	defer s.playersMu.Unlock()
 	delete(s.players, fingerprint)
 	delete(s.state.fights, fingerprint)
+	delete(s.talks, fingerprint)
 }
 
 // State implements PlayerView.
@@ -157,6 +161,11 @@ func (s *Server) Interact(fp string, dx, dy int) Result {
 	// same keystroke — the view must not lag a frame behind)
 	np := copyPlayer(s.lockedInteract(p, dx, dy))
 	r := Result{World: s.currentWorld(fp), Player: np}
+	// slice 3: the open talk session (the UI's overlay) + the quest book
+	if talk := s.talks[fp]; talk != nil {
+		r.Talk = talk
+	}
+	r.Quests = append(r.Quests, np.quests...)
 	if f, open := s.state.fights[fp]; open {
 		r.Fight = fightCopy(f)
 	}
@@ -270,6 +279,11 @@ func (s *Server) Command(fp string, cmd string, arg int) Result {
 	var events []string
 
 	switch cmd {
+	case "talk-advance": // slice 3: enter advances the conversation
+		s.advanceTalk(p)
+	case "talk-close": // esc = walk away from the conversation
+		delete(s.talks, fp)
+		w.setEvent(fp, "you walk away mid-sentence")
 	case "noop", "attack", "cast", "flee":
 		if cmd == "noop" {
 			r := Result{Player: copyPlayer(p), World: s.currentWorld(fp)}
@@ -294,7 +308,7 @@ func (s *Server) Command(fp string, cmd string, arg int) Result {
 
 	r := Result{
 		Player: copyPlayer(p),
-		World:  s.worldSnapshot(),
+		World:  s.currentWorld(fp),
 	}
 	if f, open := w.fights[fp]; open {
 		r.Fight = fightCopy(f)
@@ -302,6 +316,10 @@ func (s *Server) Command(fp string, cmd string, arg int) Result {
 	if open, _ := s.openShopLocked(p); open {
 		r.Shop = shopOpen(p)
 	}
+	if talk := s.talks[fp]; talk != nil {
+		r.Talk = talk
+	}
+	r.Quests = append(r.Quests, r.Player.quests...)
 	r.Events = events
 	return r
 }
