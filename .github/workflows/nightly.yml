@@ -1,0 +1,126 @@
+name: nightly
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  race:
+    name: race detector (full tree)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aimud
+          POSTGRES_PASSWORD: aimud
+          POSTGRES_DB: aimud
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aimud"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      docdb:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aimud
+          POSTGRES_PASSWORD: aimud
+          POSTGRES_DB: aimud_docs
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U aimud"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: stable
+      - name: race across the whole tree, storage included
+        env:
+          STORAGE_INTEGRATION: "1"
+          POSTGRES_DSN: postgres://aimud:aimud@localhost:5432/aimud?sslmode=disable
+          DOCUMENT_DSN: postgres://aimud:aimud@localhost:5433/aimud_docs?sslmode=disable
+        run: go test -race ./... -count=1
+
+  govulncheck:
+    name: govulncheck (the service faces :2525)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
+        with:
+          go-version-input: stable
+          check-latest: true
+
+  fresh-world-replay:
+    name: persisted-world round-trip (fresh DB)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aimud
+          POSTGRES_PASSWORD: aimud
+          POSTGRES_DB: aimud
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aimud"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      docdb:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aimud
+          POSTGRES_PASSWORD: aimud
+          POSTGRES_DB: aimud_docs
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U aimud"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: build and boot the stack
+        run: docker compose -f build/compose.yaml up -d --build
+
+      # the persistence round-trip: author world+objects via SQL, restart
+      # the server, and assert the content replay shows up over /api/world
+      - name: author a persisted world
+        run: |
+          docker compose -f build/compose.yaml exec -T postgres psql -U aimud -d aimud \
+            -c "INSERT INTO worlds (name, seed, ww, wh, spawn_x, spawn_y, is_active)
+                VALUES ('nightly', 20260911, 98, 25, 49, 12, true);"
+          docker compose -f build/compose.yaml exec -T postgres psql -U aimud -d aimud \
+            -c "INSERT INTO world_objects (world_id, kind, name, home_x, home_y, data)
+                SELECT id, 'enemy_group', 'nightly raiders', 20, 8, '{\"count\":2,\"level\":1}'
+                FROM worlds WHERE name = 'nightly';"
+
+      - name: restart the gamemaster onto the persisted world
+        run: docker compose -f build/compose.yaml restart gamemaster
+
+      - name: assert the replay (dims + authored group)
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8081/healthz > /dev/null; then break; fi
+            sleep 1
+          done
+          body=$(curl -s http://127.0.0.1:8081/api/world)
+          echo "$body"
+          echo "$body" | grep -q '"w": 98' || { echo "::error::world dims did not come from the record"; exit 1; }
+          echo "$body" | grep -q 'nightly raiders' || { echo "::error::authored content did not replay"; exit 1; }

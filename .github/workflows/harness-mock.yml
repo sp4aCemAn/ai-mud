@@ -1,0 +1,91 @@
+name: harness-mock
+on:
+  push: {}
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  harness-tools:
+    name: AI tool-call contract (mock LLM)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aimud
+          POSTGRES_PASSWORD: aimud
+          POSTGRES_DB: aimud
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aimud"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      docdb:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aimud
+          POSTGRES_PASSWORD: aimud
+          POSTGRES_DB: aimud_docs
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U aimud"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: stable
+
+      # Boot the real server against the real databases, pointed at a MOCK
+      # LLM endpoint. The harness loop connects, reads the stub model list,
+      # and idles correctly (the no-LLM degradation path from the proposal).
+      # When the harness grows tool-driven events, this same job asserts
+      # the full observe → prompt → tool-call → /api/world loop.
+      - name: boot the server with a mock LLM config
+        env:
+          POSTGRES_DSN: postgres://aimud:aimud@localhost:5432/aimud?sslmode=disable
+          DOCUMENT_DSN: postgres://aimud:aimud@localhost:5433/aimud_docs?sslmode=disable
+          HARNESS_BASE_URL: http://127.0.0.1:1234/v1
+          W_SEED: "20260909"
+        run: |
+          # mock LLM: serves /v1/models + a fixed tool-call chat completion
+          go run ./tests/harness_mock > mock.log 2>&1 &
+          echo "mock pid $(jobs -p)"
+          # the real server in the background
+          go run ./cmd/app/server > server.log 2>&1 &
+          server_pid=$!
+          # wait for healthz so the contract suite never races the boot
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8081/healthz > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8081/healthz > /dev/null
+
+      - name: run the tool-contract smoke
+        env:
+          GAME_SMOKE_URL: http://127.0.0.1:8081
+          GAME_SMOKE_LIVE_ONLY: "1"
+        run: go test ./tests/smokes -count=1
+
+      - name: tidy background processes
+        if: always()
+        run: |
+          pkill -f "cmd/app/server" || true
+          pkill -f "harness_mock" || true
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: harness-mock-logs
+          path: |
+            server.log
+            mock.log
+          retention-days: 3

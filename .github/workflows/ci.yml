@@ -1,0 +1,78 @@
+name: ci
+on:
+  push: {}
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: unit (build, vet, test)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: stable
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test (units; smokes skip without GAME_SMOKE_URL)
+        run: go test ./... -count=1
+
+  storage-integration:
+    name: storage integration (real databases)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      # the relational side — same engine version as build/compose.yaml
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aimud
+          POSTGRES_PASSWORD: aimud
+          POSTGRES_DB: aimud
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aimud"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      # the document side — second postgres instance used as a jsonb store
+      docdb:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aimud
+          POSTGRES_PASSWORD: aimud
+          POSTGRES_DB: aimud_docs
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U aimud"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: stable
+
+      - name: storage integration suite (migrations run on a clean DB)
+        env:
+          STORAGE_INTEGRATION: "1"
+          POSTGRES_DSN: postgres://aimud:aimud@localhost:5432/aimud?sslmode=disable
+          DOCUMENT_DSN: postgres://aimud:aimud@localhost:5433/aimud_docs?sslmode=disable
+        run: go test ./internal/storage -count=1

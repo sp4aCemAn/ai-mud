@@ -1,0 +1,50 @@
+name: smoke-expect
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  expect-smokes:
+    name: terminal smokes (ui + auth)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: install expect
+        run: sudo apt-get update && sudo apt-get install -y expect
+
+      - name: build and boot the stack
+        run: docker compose -f build/compose.yaml up -d --build
+
+      - name: wait for ssh port (2525)
+        run: |
+          for i in $(seq 1 30); do
+            if nc -z 127.0.0.1 2525; then exit 0; fi
+            sleep 1
+          done
+          echo "::error::ssh port never opened"
+          exit 1
+
+      # the smokes are self-sufficient (guest gate replies, the auth smoke
+      # mints /tmp/ai_mud_smoke_key if missing). retry-once: known flake
+      # only when the previous suite leaves a guest on the spawn tile
+      # (<30s reap window) — see tests/DEBUG_STATE.md
+      - name: ui smoke (movement, inventory, wizard)
+        run: expect tests/smoke/ui_smoke.exp || expect tests/smoke/ui_smoke.exp
+
+      - name: auth smoke (create → relogin → keyed recall → fp steal)
+        run: expect tests/smoke/auth_smoke.exp || expect tests/smoke/auth_smoke.exp
+
+      - name: capture server logs
+        if: always()
+        run: docker compose -f build/compose.yaml logs gamemaster | tee gamemaster.log
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: expect-smoke-logs
+          path: gamemaster.log
+          retention-days: 3

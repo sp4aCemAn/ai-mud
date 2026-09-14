@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # keep the SHA-pinned actions current (updated PRs bump the SHA and
+  # keep the `# vX` comment in step)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  # module bumps — conservative, weekly
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+  # the compose images: postgres bumps land as PRs to eyeball
+  - package-ecosystem: docker
+    directory: build/gamemaster
+    schedule:
+      interval: monthly

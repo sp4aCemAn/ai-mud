@@ -1,0 +1,57 @@
+name: smoke
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 2 * * *"   # nightly
+  workflow_dispatch:
+
+jobs:
+  deployed-smoke:
+    name: deployed-contract API smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: stable
+
+      # build the image and boot the whole stack — up -d --build, never start
+      # (compose start silently reuses a stale image — DEBUG_STATE gotcha)
+      - name: build and boot the stack
+        run: docker compose -f build/compose.yaml up -d --build
+
+      - name: wait for healthz
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8081/healthz; then exit 0; fi
+            sleep 1
+          done
+          echo "::error::healthz never went green"
+          docker compose -f build/compose.yaml logs gamemaster
+          exit 1
+
+      - name: run stored smokes (deployed contract)
+        env:
+          GAME_SMOKE_URL: http://127.0.0.1:8081
+          GAME_SMOKE_LIVE_ONLY: "1"
+        run: go test ./tests/smokes -count=1
+
+      # debugging output: world snapshot + gamemaster logs, kept on failure
+      - name: capture world snapshot and server logs
+        if: always()
+        run: |
+          curl -s http://127.0.0.1:8081/api/world | tee world.json || true
+          docker compose -f build/compose.yaml logs gamemaster | tee gamemaster.log
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: smoke-logs
+          path: |
+            world.json
+            gamemaster.log
+          retention-days: 3

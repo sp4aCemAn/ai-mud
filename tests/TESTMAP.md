@@ -5,6 +5,19 @@ same package to reach unexported state); this folder collects the
 end-to-end scripts and the index. If a name here loses its file, grep
 the path — nothing is generated.
 
+## CI workflows: `.github/workflows/`
+
+| File | Trigger | Purpose |
+|---|---|---|
+| `linter.yaml` | push/PR to main | golangci-lint (binary `v2.13.1` — first go1.25-built line was `v2.4.0`; the old `v2.3.1` pin failed with "Go version go1.24 < targeted 1.25.0"). Actions pinned to commit SHAs. |
+| `ci.yml` | every push/PR | `build → vet → go test` unit job + a `storage-integration` job with real `postgres:17-alpine` service containers on both ports (schema migrations proven on a clean DB every push). |
+| `smoke.yml` | push to main, nightly, manual | builds + boots the compose stack, waits for `/healthz`, runs the stored smoke suite in deployed-contract mode (`GAME_SMOKE_LIVE_ONLY=1`), uploads `/api/world` dump + gamemaster logs on failure. |
+| `smoke-expect.yml` | push to main, manual | expect-based UX smokes (`ui_smoke.exp`, `auth_smoke.exp` — retry-once for the spawn-tile race); needs `expect` on the runner. |
+| `harness-mock.yml` | every push/PR | boots the real server on real DBs with the mock LLM (`tests/harness_mock` — the no-LLM degradation contract) + the full tool-contract suite. |
+| `nightly.yml` | cron 04:00, manual | `go test -race ./...` (with storage integration), `govulncheck`, and a live persisted-world round-trip: SQL-insert world + objects → restart → assert `/api/world` replay. |
+
+Supply-chain: all `uses:` pins are commit SHAs with the release tag as a comment; `.github/dependabot.yml` bumps the pins (and gomod/docker files) weekly.
+
 ## End-to-end: `tests/smoke/`
 
 | Script | What it drives |
