@@ -42,7 +42,10 @@ type Fight struct {
 // worldState is everything the Server owns beyond players. Guarded by
 // the same mutex as the player map.
 type worldState struct {
-	ww, wh      int // world dims (dynamic — Resize regenerates)
+	ww, wh      int // the currently served rect's SPAN (goes only up)
+	wx0, wy0    int // absolute coords of tiles[0][0] (infinite-plane math)
+	seed        int64               // the world's generation seed
+	chunks      map[chunkKey][]string // chunk cache (genChunk memo)
 	tiles       []string
 	spawnX      int
 	spawnY      int

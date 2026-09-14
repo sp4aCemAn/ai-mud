@@ -274,7 +274,7 @@ func (s *Server) applyObject(o storage.WorldObject, x, y int) {
 	w := s.state
 	switch o.Kind {
 	case storage.ObjectEdit:
-		applyTerrainEdit(w, o)
+		s.applyTerrainEdit(o)
 	case storage.ObjectEnemyGroup:
 		count, level := groupStats(o)
 		if e, ok := w.spawnEnemyAt(o.Name, count, level, x, y); ok {

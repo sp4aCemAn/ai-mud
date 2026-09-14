@@ -33,7 +33,7 @@ func NewServerWorld(w WorldSpec) *Server {
 		players:   make(map[string]*Player),
 		loaded:    &w,
 	}
-	spawnWorldBase(s, rand.New(rand.NewSource(w.Seed)), w.WW, w.WH)
+	spawnWorldBase(s, w.Seed, w.WW, w.WH)
 	s.objects = append(s.objects, w.Objects...)
 	s.replayContent()
 	slog.Info("persisted world loaded", "name", w.Name, "seed", w.Seed,
@@ -43,16 +43,22 @@ func NewServerWorld(w WorldSpec) *Server {
 
 // spawnWorldBase generates the terrain for a world without autoplay
 // content: dots come from either replayContent (persisted worlds) or
-// populateDefaultWorld (the classic seed-env flow).
-func spawnWorldBase(s *Server, r *rand.Rand, ww, wh int) {
-	tiles, sx, sy := genTerrain(r, ww, wh)
+// populateDefaultWorld (the classic seed-env flow). The base board is
+// the first slice of the infinite chunk plane (same generator the
+// absorb path uses — seams never break).
+func spawnWorldBase(s *Server, seed int64, ww, wh int) {
+	r := rand.New(rand.NewSource(seed))
 	w := &worldState{
 		ww:        ww,
 		wh:        wh,
-		spawnX:    sx,
-		spawnY:    sy,
-		tiles:     tiles,
-		region:    mainRegion(tiles),
+		wx0:       0,
+		wy0:       0,
+		seed:      seed,
+		chunks:    make(map[chunkKey][]string),
+		spawnX:    0,
+		spawnY:    0,
+		tiles:     genBoard(nil, seed, ww, wh),
+		region:    nil,
 		enemies:   make(map[int]*Enemy),
 		fights:    make(map[string]*Fight),
 		shops:     make(map[string]bool),
@@ -60,6 +66,26 @@ func spawnWorldBase(s *Server, r *rand.Rand, ww, wh int) {
 		maxGroups: 4,
 	}
 	s.state = w
+
+	// spawn: keep the walkable region's centroid dot (pickSpawn logic
+	// over the same glyphs the finite board used; region local==abs —
+	// the base board is anchored at 0,0)
+	if cells := mainRegion(w.tiles); len(cells) > 0 {
+		cx, cy := 0, 0
+		for _, c := range cells {
+			cx += c[0]
+			cy += c[1]
+		}
+		cx, cy = cx/len(cells), cy/len(cells)
+		sx, sy, bestd := cells[0][0], cells[0][1], 1<<30
+		for _, c := range cells {
+			if d := abs(c[0]-cx) + abs(c[1]-cy); d < bestd {
+				sx, sy, bestd = c[0], c[1], d
+			}
+		}
+		w.spawnX, w.spawnY = sx, sy
+	}
+	w.region = mainRegion(w.tiles)
 }
 
 // replayContent re-places authored objects on the CURRENT terrain:
@@ -89,25 +115,22 @@ func (s *Server) replayContentReared(base uint64) {
 	s.regenCount = 0 // the record's seed is authoritative from here
 	w := s.state
 
-	// deterministic terrain from the record (the autoplay seed ladder
-	// no longer applies to content)
 	if base > w.version {
 		w.version = base
 	}
 
-	fresh, _, _ := genTerrain(rand.New(rand.NewSource(spec.Seed)), spec.WW, spec.WH)
-	w.tiles = fresh
-	w.region = mainRegion(w.tiles)
+	// terrain is the infinite chunk plane (fixed by the seed) — no tile
+	// regen happens anymore; the record's dims were the BOOT rect.
+	w.enemies = map[int]*Enemy{}
+	w.npcDot = Dot{X: -1, Y: -1}
 	if spec.SpawnX > 0 || spec.SpawnY > 0 {
 		w.spawnX, w.spawnY = spec.SpawnX, spec.SpawnY
 	}
-	w.enemies = map[int]*Enemy{}
-	w.npcDot = Dot{X: -1, Y: -1}
 
 	// first pass: terrain edits (they can open or close tiles)
 	for _, o := range s.objects {
 		if o.Kind == storage.ObjectEdit {
-			applyTerrainEdit(w, o)
+			s.applyTerrainEdit(o)
 		}
 	}
 	w.changed()
@@ -139,19 +162,22 @@ func (s *Server) replayContentReared(base uint64) {
 	}
 }
 
-// project lands an object's anchor tile on the live terrain, nudging
-// to the nearest region spot when the authored tile is water/outside.
+// project lands an object's anchor tile on the live terrain: when the
+// authored anchor is water (or outside the served rect), spiral-probe
+// a walkable tile around it.
 func project(w *worldState, o storage.WorldObject) (int, int) {
 	x, y := o.HomeX, o.HomeY
-	if x >= 0 && y >= 0 && x < w.ww && y < w.wh && walkable(w.tiles, x, y) {
+	if x >= 0 && y >= 0 && w.walkableAt(x, y) {
 		return x, y
 	}
 	return w.pickRegionSpot(w.spawnX, w.spawnY, 3)
 }
 
 // applyTerrainEdit writes one authored terrain tweak (kind=edit rows
-// carry glyph patches like [{"x":n,"y":n,"g":"T"}], applied post-regen).
-func applyTerrainEdit(w *worldState, o storage.WorldObject) {
+// carry glyph patches like [{"x":y,"y":n,"g":"T"}]) into the grid,
+// origin-aware because the infinite plane may be serving a rect that
+// doesn't start at 0,0. Deltas far outside the rect are skipped.
+func (s *Server) applyTerrainEdit(o storage.WorldObject) {
 	var deltas []struct {
 		X int    `json:"x"`
 		Y int    `json:"y"`
@@ -160,17 +186,22 @@ func applyTerrainEdit(w *worldState, o storage.WorldObject) {
 	if len(o.Tiles) == 0 || json.Unmarshal(o.Tiles, &deltas) != nil {
 		return // malformed edit: skip it, keep the world loadable
 	}
+	w := s.state
 	for _, d := range deltas {
-		if d.Y < 0 || d.Y >= w.wh || d.X < 0 || d.X >= w.ww {
+		if d.Y < 0 || d.X < 0 {
+			continue
+		}
+		lx, ly := d.X-w.wx0, d.Y-w.wy0
+		if ly < 0 || ly >= len(w.tiles) || lx < 0 || lx >= len([]rune(w.tiles[ly])) {
 			continue
 		}
 		glyph := []rune(d.G)
 		if len(glyph) == 0 {
 			continue
 		}
-		row := []rune(w.tiles[d.Y])
-		row[d.X] = glyph[0]
-		w.tiles[d.Y] = string(row)
+		row := []rune(w.tiles[ly])
+		row[lx] = glyph[0]
+		w.tiles[ly] = string(row)
 	}
 	w.changed()
 }

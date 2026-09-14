@@ -58,23 +58,22 @@ type Server struct {
 }
 
 func NewServer() *Server {
+	seed := worldSeed()
 	s := &Server{
 		sessions:  make(map[string]Session),
 		tickEvery: 500 * time.Millisecond,
 		players:   make(map[string]*Player),
 	}
-	spawnWorld(s, rand.New(rand.NewSource(worldSeed())), WorldW, WorldH, 0)
+	spawnWorld(s, seed, WorldW, WorldH, 0)
 	slog.Info("world generated", "size", fmt.Sprintf("%dx%d", WorldW, WorldH),
 		"spawn", fmt.Sprintf("%d,%d", s.state.spawnX, s.state.spawnY),
-		"seed", worldSeed())
+		"seed", seed)
 	return s
 }
 
-// regenWorld rebuilds the world at a new size: fresh terrain,
-// merchant and enemy dots. Players stay (stats, coins) and are
-// carried to proportional positions — any that land in water or on a
-// dot reappear at the new spawn. Open fights end (baddies regroup).
-// UI note: do not call per tick; only on real size changes.
+// regenWorld is retired by the infinite plane: terrain never rebuilds —
+// the world grows chunk-wise when players roam past the served rect.
+// The call remains as a view-hint no-op for legacy resize flows.
 func (s *Server) regenWorld(w, h int) {
 	ww, wh := dim(w, MinW, MaxW), dim(h, MinH, MaxH)
 	if s.state != nil && s.state.ww == ww && s.state.wh == wh {
@@ -83,37 +82,28 @@ func (s *Server) regenWorld(w, h int) {
 
 	s.playersMu.Lock()
 	defer s.playersMu.Unlock()
-	oldW, oldH := WorldW, WorldH
-	if s.state != nil {
-		oldW, oldH = s.state.ww, s.state.wh
-	}
-	// seed the terrain: for persisted worlds the record's seed is
-	// authoritative at every size; for seed-env worlds the resize
-	// ladder (W_SEED + n) keeps each resize deterministic.
-	versionBefore := s.state.version
-	if s.loaded != nil {
-		s.loaded.WW, s.loaded.WH = ww, wh
-		spawnWorldBase(s, rand.New(rand.NewSource(s.loaded.Seed)), ww, wh)
-	} else {
-		s.regenCount++
-		spawnWorld(s, rand.New(rand.NewSource(worldSeed()+int64(s.regenCount))), ww, wh, uint64(s.regenCount)*1_000_000)
-	}
-	// authored content goes back on the new terrain (persisted worlds
-	// only); players are NOT repositioned unless their tile drowned
-	s.replayContentReared(versionBefore)
-	n := s.state
 
-	for fp, p := range s.players {
-		nx := clamp(n.ww*p.X/oldW, 0, ww-1)
-		ny := clamp(n.wh*p.Y/oldH, 0, wh-1)
-		if !walkable(n.tiles, nx, ny) {
-			nx, ny = n.spawnX, n.spawnY
-		}
-		p.X, p.Y = nx, ny
-		delete(n.fights, fp) // enemy dots regenerated; duels end
+	// the world GROWS to fit a bigger board and never shrinks: absorbing
+	// (anchoring at the old rect's corners) re-uses the chunk plane
+	w := s.state
+	wWW, wWH := w.ww, w.wh
+	newW, newH := max(ww, wWW), max(wh, wWH)
+	if newW == wWW && newH == wWH {
+		return
 	}
-	s.state.setEvent("global", "the land ripples — remade at the size of your eyes")
-	slog.Info("world resized", "size", fmt.Sprintf("%dx%d", ww, wh))
+	versionBefore := w.version
+	s.absorbInto(newW-1, newH-1)
+	w.replayContentReared(versionBefore)
+	// players keep their positions (the world only grew)
+	s.state.setEvent("global", "the land ripples — reaching farther, never smaller")
+	slog.Info("world grew", "size", fmt.Sprintf("%dx%d", w.ww, w.wh))
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // worldSeed is time-based, but W_SEED pins it for reproducible smoke

@@ -101,32 +101,6 @@ func blur2D(field [][]float64, kernel []float64) [][]float64 {
 	return out
 }
 
-// genTerrain blurs a half-resolution noise grid up to world size,
-// thresholds it into glyphs, and picks the spawn tile.
-func genTerrain(r *rand.Rand, ww, wh int) (tiles []string, spawnX, spawnY int) {
-	cw, ch := ww/2+2, wh/2+2
-	cg := make([][]float64, ch)
-	for y := range cg {
-		cg[y] = make([]float64, cw)
-		for x := range cg[y] {
-			cg[y][x] = r.Float64()
-		}
-	}
-	full := upsample(cg, ww, wh)
-	smooth := blur2D(blur2D(full, blurKernel), blurKernel)
-
-	tiles = make([]string, wh)
-	for y := 0; y < wh; y++ {
-		row := make([]rune, ww)
-		for x := 0; x < ww; x++ {
-			row[x] = heightGlyph(smooth[y][x])
-		}
-		tiles[y] = string(row)
-	}
-	spawnX, spawnY = pickSpawn(tiles, ww, wh)
-	return tiles, spawnX, spawnY
-}
-
 // upsample stretches src to w×h by nearest-neighbour sampling; the
 // blur rounds out the steps.
 func upsample(src [][]float64, w, h int) [][]float64 {
@@ -232,22 +206,7 @@ func pickSpawn(tiles []string, _, _ int) (int, int) {
 	return sx, sy
 }
 
-// randomWalkable picks a walkable tile at least dist steps from
-// (sx, sy); 200 tries then relaxes the distance.
-func randomWalkable(tiles []string, r *rand.Rand, sx, sy, dist int) (int, int) {
-	ww := len([]rune(tiles[0]))
-	wh := len(tiles)
-	for d := dist; d >= 0; d-- {
-		for tries := 0; tries < 200; tries++ {
-			x, y := r.Intn(ww), r.Intn(wh)
-			if walkable(tiles, x, y) && abs(x-sx)+abs(y-sy) >= d {
-				return x, y
-			}
-		}
-	}
-	return sx, sy
-}
-
+// (randomWalkable retired — the live world answers via walkableAt)
 func abs(v int) int {
 	if v < 0 {
 		return -v
