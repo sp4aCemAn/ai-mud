@@ -64,6 +64,40 @@ func TestNewServerWorldReplaysObjects(t *testing.T) {
 	}
 }
 
+func hasEnemyNamed(sum WorldSummary, name string) bool {
+	for _, n := range sum.EnemyNames {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPersistedSpawnNeverWater(t *testing.T) {
+	// a rescued row that THOUGHT the spawn was walkable may be stale —
+	// the chunk plane's look differs from the old finite generator's
+	spec := WorldSpec{Name: "wet gate", Seed: 990099, WW: WorldW, WH: WorldH}
+	s := NewServerWorld(spec)
+	// find SOME water on the plane; pin the record's spawn there
+	wx, wy := -1, -1
+	for y := 0; y < s.state.wh && wx < 0; y++ {
+		for x := 0; x < s.state.ww && wx < 0; x++ {
+			if !s.state.walkableAt(x, y) {
+				wx, wy = x, y
+			}
+		}
+	}
+	if wx < 0 {
+		t.Skip("seed's boot rect has no water")
+	}
+	wc := WorldSpec{Name: "wet gate", Seed: spec.Seed, WW: spec.WW, WH: spec.WH,
+		SpawnX: wx, SpawnY: wy}
+	s2 := NewServerWorld(wc)
+	if !s2.state.walkableAt(s2.state.spawnX, s2.state.spawnY) {
+		t.Fatalf("boot spawned in water at %d,%d", s2.state.spawnX, s2.state.spawnY)
+	}
+}
+
 func TestResizeKeepsPersistedContent(t *testing.T) {
 	w := WorldSpec{
 		Name: "held-field",
@@ -105,13 +139,4 @@ func TestResizeKeepsPersistedContent(t *testing.T) {
 	if sum.Version <= vBefore {
 		t.Fatal("resize must bump the render version")
 	}
-}
-
-func hasEnemyNamed(sum WorldSummary, name string) bool {
-	for _, n := range sum.EnemyNames {
-		if n == name {
-			return true
-		}
-	}
-	return false
 }

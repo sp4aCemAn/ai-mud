@@ -410,19 +410,19 @@ func TestCameraPansWithPlayer(t *testing.T) {
 			gs.camX, gs.camY, vw0, vh0, gs.p.X, gs.p.Y)
 	}
 
-	// walk east to the right edge: the camera pans once the player
-	// leaves the dead zone, clamped to the world's right margin
-	for i := 0; i < 25; i++ { // spawn 20 → 39 (the east wall)
+	// walk east well past the old rect: the world grows; the camera
+	// pans once the player leaves the dead zone and rides behind them
+	for i := 0; i < 25; i++ { // spawn 20 → 45 (the world grows east)
 		r = drive(t, r, "l")
 	}
 	gs = activeScreen(r.(Router)).(GameScreen)
 	vw, _ := gs.fieldSize()
-	wantX := game.WorldW - vw // clamped follow
-	if gs.p.X != game.WorldW-1 {
-		t.Fatalf("player should reach the east wall: %d,%d", gs.p.X, gs.p.Y)
+	wantX := clamp(gs.p.X-(vw-1-camPad), gs.world.OriginX, gs.world.OriginX+gs.world.W-vw)
+	if gs.p.X <= game.WorldW {
+		t.Fatalf("player should roam past the old rect: %d,%d", gs.p.X, gs.p.Y)
 	}
 	if gs.camX != wantX {
-		t.Fatalf("camera did not ride the right edge with the player: cam=%d want=%d", gs.camX, wantX)
+		t.Fatalf("camera did not ride with the player: cam=%d want=%d", gs.camX, wantX)
 	}
 	if gs.p.Y < gs.camY || gs.p.Y >= gs.camY+9 {
 		t.Fatalf("player not visible in the slice: cam=(%d,%d) player (%d,%d)", gs.camX, gs.camY, gs.p.X, gs.p.Y)
@@ -437,13 +437,13 @@ func TestCameraPansWithPlayer(t *testing.T) {
 	if gs.camX != wantX {
 		t.Fatalf("walking inside the dead zone must not pan: cam=%d want=%d", gs.camX, wantX)
 	}
-	// …but the west wall yanks it fully back
-	for i := 0; i < 45; i++ {
+	// …but far west yanks it fully back toward the old origin
+	for i := 0; i < 70; i++ {
 		r = drive(t, r, "h")
 	}
 	gs = activeScreen(r.(Router)).(GameScreen)
-	if gs.camX != 0 {
-		t.Fatalf("reaching the west edge should pan back: cam=%d", gs.camX)
+	if gs.camX > wantX-16 {
+		t.Fatalf("reaching far west should pan back hard: cam=%d", gs.camX)
 	}
 }
 
@@ -525,12 +525,14 @@ func TestGateGlyphWalkableAndPainted(t *testing.T) {
 	gs = activeScreen(r.(Router)).(GameScreen)
 
 	rowBefore := gateRow(t, gs, spawnY)
-	wideIdx := spawnX + 1 - gs.camX
-	if rowBefore[wideIdx] != '町' {
-		t.Fatalf("gate glyph not painted into the slice: %q", string(rowBefore))
+	gateIdx := spawnX + 1 - gs.camX
+	// the DATA keeps the canonical wide kanji, the RENDER maps it to a
+	// 1-cell block — rows render uniform width again
+	if rowBefore[gateIdx] != '#' {
+		t.Fatalf("gate glyph not rendered as the 1-cell block: %q", string(rowBefore))
 	}
-	if w := displayWidth(rowBefore); w != game.WorldW+1 {
-		t.Fatalf("row with the wide gate must claim one extra cell: width=%d want=%d", w, game.WorldW+1)
+	if w := displayWidth(rowBefore); w != game.WorldW {
+		t.Fatalf("gate row must render one cell per tile: width=%d want=%d", w, game.WorldW)
 	}
 
 	// stepping onto 町 is walkable
@@ -542,19 +544,14 @@ func TestGateGlyphWalkableAndPainted(t *testing.T) {
 	field := gs.renderField()
 	lines := strings.Split(field, "\n")
 	rowOver := []rune(lines[spawnY-gs.camY])
-	// '@' now sits on the wide glyph — the row must stay width-aligned
-	// (the @ claims both cells so the rest of the row doesn't shift)
-	if w := displayWidth(rowOver); w != game.WorldW+1 {
-		t.Fatalf("row under the player must keep its cell width: %d want %d", w, game.WorldW+1)
+	// '@' composites over the gate in the render — plain one-cell math
+	// (the gate renders as the 1-cell block, no wide-cell ambiguity)
+	if w := displayWidth(rowOver); w != game.WorldW {
+		t.Fatalf("row under the player must stay aligned: %d want %d", w, game.WorldW)
 	}
-	// '@' takes the gate tile's first display cell, filler keeps the
-	// second (cells, not rune slots)
-	overIdx := cellsBefore(rowOver, gs.p.X-gs.camX)
-	if overIdx+1 >= len(rowOver) || rowOver[overIdx] != '@' || rowOver[overIdx+1] != ' ' {
-		t.Fatalf("@ must claim the gate's two cells: %q", string(rowOver))
-	}
-	if displayWidth(rowOver) != game.WorldW+1 {
-		t.Fatalf("display width must stay aligned: %d", displayWidth(rowOver))
+	overIdx := gs.p.X - gs.camX
+	if overIdx >= len(rowOver) || rowOver[overIdx] != '@' {
+		t.Fatalf("@ must sit over the gate tile: %q", string(rowOver))
 	}
 	if displayWidth(rowBefore) != displayWidth(rowOver) {
 		t.Fatalf("splice must not change row display width")
@@ -562,13 +559,12 @@ func TestGateGlyphWalkableAndPainted(t *testing.T) {
 }
 
 func TestGlyphCellWidth(t *testing.T) {
-	if glyphCellWidth('町') != 2 {
-		t.Fatal("the gate kanji should claim two cells")
-	}
-	if glyphCellWidth('x') != 1 || glyphCellWidth('~') != 1 {
-		t.Fatal("plain glyphs stay one cell")
-	}
-	if !game.IsWideGlyph('町') || game.IsWideGlyph('m') {
-		t.Fatal("IsWideGlyph disagrees with the ui table")
+	// the bail-out clause: wide-cell paint is ambiguous across SSH
+	// clients — the gate renders as a 1-cell block, so all accounting
+	// is plain one-cell math now
+	for _, r := range []rune{'町', 'x', '#', ';', '$'} {
+		if glyphCellWidth(r) != 1 {
+			t.Fatalf("%q must stay one cell", r)
+		}
 	}
 }

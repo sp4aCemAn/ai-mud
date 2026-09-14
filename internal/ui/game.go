@@ -415,7 +415,10 @@ func (g GameScreen) View() string {
 
 	// Diablo layout: full-bleed field, HUD strip pinned bottom-center,
 	// event log + hints under it (or the nudge banner on top).
-	body := lipgloss.JoinVertical(lipgloss.Center,
+	// LEFT-join: every child change (a log line's width, a wide 町
+	// cell) would otherwise re-center the field block and slide the
+	// whole map — centering only inside fixed-width children.
+	body := lipgloss.JoinVertical(lipgloss.Left,
 		g.renderField(),
 		hint(g.renderLog()),
 		lipgloss.NewStyle().Width(g.width).Align(lipgloss.Center).Render(hud),
@@ -545,25 +548,27 @@ func (g GameScreen) fieldSize() (vw, vh int) {
 
 // panCamera keeps the player's dot inside the viewport's padded dead
 // zone, moving the window as little as possible (no hard centering).
-// Worlds smaller than the pane pin the camera to 0,0. Called from the
-// Update paths only (View must not mutate state).
+// The camera lives in ABSOLUTE coords (the world may serve a rect that
+// doesn't start at 0,0 — infinite plane growth shifts it). Worlds
+// smaller than the pane pin the camera to the world's origin. Called
+// from the Update paths only (View must not mutate state).
 func (g *GameScreen) panCamera() {
 	vw, vh := g.fieldSize()
-	axis := func(pos, size, cam, pane int) int {
+	axis := func(pos, size, cam, origin, pane int) int {
 		if pane >= size {
-			return 0 // whole world visible
+			return origin // whole world visible
 		}
-		max := size - pane
+		hi := origin + size - pane
 		if pos < cam+camPad {
 			cam = pos - camPad
 		}
 		if pos > cam+pane-1-camPad {
 			cam = pos - (pane - 1 - camPad)
 		}
-		return clamp(cam, 0, max)
+		return clamp(cam, origin, hi)
 	}
-	g.camX = axis(g.p.X, g.world.W, g.camX, vw)
-	g.camY = axis(g.p.Y, g.world.H, g.camY, vh)
+	g.camX = axis(g.p.X, g.world.W, g.camX, g.world.OriginX, vw)
+	g.camY = axis(g.p.Y, g.world.H, g.camY, g.world.OriginY, vh)
 }
 
 func clamp(v, lo, hi int) int {
@@ -596,7 +601,10 @@ func (g *GameScreen) refreshTerrainCache() {
 
 // buildField builds the version-cached VISIBLE world block (the
 // [camX,camX+vw) × [camY,camY+vh) slice of terrain with dots on top —
-// no @; the player composites per frame.
+// no @; the player composites per frame. Row display widths are
+// NORMALIZED (wide glyphs like 町 paint two cells): every row is
+// padded to the same cell width, or lipgloss's per-row centering
+// would jitter the whole map by a cell whenever a wide glyph scrolls.
 func (g GameScreen) buildField(vw, vh int) string {
 	dots := map[[2]int]rune{}
 	for _, d := range g.world.Dots {
@@ -606,30 +614,64 @@ func (g GameScreen) buildField(vw, vh int) string {
 		}
 		dots[[2]int{d.X, d.Y}] = glyph
 	}
-	var b strings.Builder
+
+	// first pass: rows as cell-normalized strings (trailing pad)
+	rows := make([]string, vh)
+	maxDisp := 0
+	disp := make([]int, vh)
 	for y := g.camY; y < g.camY+vh; y++ {
+		var b strings.Builder
+		w := 0
 		for x := g.camX; x < g.camX+vw; x++ {
 			if glyph, ok := dots[[2]int{x, y}]; ok {
 				b.WriteRune(glyph)
+				w += glyphCellWidth(glyph)
 				continue
 			}
 			b.WriteRune(g.worldGlyph(x, y))
+			w += glyphCellWidth(g.worldGlyph(x, y))
 		}
-		b.WriteString("\n")
+		rows[y-g.camY] = b.String()
+		if w > maxDisp {
+			maxDisp = w
+		}
+		disp[y-g.camY] = w
 	}
-	return strings.TrimSuffix(b.String(), "\n")
+	// second pass: pad every row to the pane's cell width
+	for i := range rows {
+		if pad := maxDisp - disp[i]; pad > 0 {
+			rows[i] += strings.Repeat(" ", pad)
+		}
+	}
+	return strings.Join(rows, "\n")
 }
 
-// worldGlyph is terrain with dots on top.
+// worldGlyph is terrain with dots on top at ABSOLUTE coords; the
+// world snapshot covers [OriginX..OriginX+W) × [OriginY..OriginY+H).
+// The world's canonical gate glyph stays 町 (data + tools read it),
+// but the RENDER maps it to a 1-cell ASCII block: wide-cell paint is
+// AMBIGUOUS across SSH clients (CJK mode), and every ambiguous cell
+// was sliding the row's centered composition — horizontal jitter.
 func (g GameScreen) worldGlyph(x, y int) rune {
-	if g.world.Tiles == nil || y >= len(g.world.Tiles) {
+	r := g.worldGlyphData(x, y)
+	if r == game.TileGate {
+		return '#' // 1-cell render of the wide kanji (bail-out clause)
+	}
+	return r
+}
+
+// worldGlyphData is terrain + dots, absolute → rect-local, no render
+// remapping (the raw snapshot glyph).
+func (g GameScreen) worldGlyphData(x, y int) rune {
+	ly, lx := y-g.world.OriginY, x-g.world.OriginX
+	if g.world.Tiles == nil || ly < 0 || ly >= len(g.world.Tiles) {
 		return '·'
 	}
-	row := []rune(g.world.Tiles[y])
-	if x < len(row) {
-		return row[x]
+	b := []rune(g.world.Tiles[ly])
+	if lx < 0 || lx >= len(b) {
+		return '·'
 	}
-	return '·'
+	return b[lx]
 }
 
 // glyphCellWidth is the display-cell width of one world glyph. CJK
@@ -637,10 +679,7 @@ func (g GameScreen) worldGlyph(x, y int) rune {
 // one. The field rows stay rune-indexed, but splices and column-claims
 // translate through this (row display width can exceed its rune count).
 func glyphCellWidth(r rune) int {
-	if game.IsWideGlyph(r) {
-		return 2
-	}
-	return 1
+	return 1 // wide-glyph paint is ambiguous across SSH clients; render 1-cell
 }
 
 // cellsBefore counts the display cells used by the first x tiles of a

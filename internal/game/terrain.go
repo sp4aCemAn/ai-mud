@@ -18,6 +18,21 @@ import (
 const chunkSize = 32 // tiles per chunk edge
 const blurMargin = 4 // the 2-run blur reaches this many tiles out
 
+// tileAt returns the absolute tile's glyph without growing.
+func (w *worldState) tileAt(x, y int) rune {
+	lx, ly := x-w.wx0, y-w.wy0
+	if ly < 0 || ly >= len(w.tiles) || lx < 0 || lx >= len([]rune(w.tiles[ly])) {
+		return tileWater // off-plane tiles render as wall/water
+	}
+	return []rune(w.tiles[ly])[lx]
+}
+
+// walkableAt is the absolute-coordinate walk check; relative walkable()
+// stays a pure helper for the local grid.
+func (w *worldState) walkableAt(x, y int) bool {
+	return w.tileAt(x, y) != tileWater
+}
+
 // hash01 is a deterministic [0,1) value at one coarse lattice point:
 // splitmix64 over (seed, gx, gy). No ordering dependence.
 func hash01(seed int64, gx, gy int) float64 {

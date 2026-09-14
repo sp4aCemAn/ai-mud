@@ -24,27 +24,32 @@ func TestJoinIdempotentPerFingerprint(t *testing.T) {
 	}
 }
 
-func TestMoveClampsToWorldBounds(t *testing.T) {
+func TestMoveExploresPastOldBounds(t *testing.T) {
 	s := NewServer()
 	flatten(s)
 	s.Join("fp", "guest")
 
-	// walk far past every edge
+	// the infinite plane: walking past the old rect grows the world,
+	// the player never clamps
 	for i := 0; i < WorldW+10; i++ {
 		if _, ok := s.Move("fp", 1, 0); !ok {
 			t.Fatal("move on known player should succeed")
 		}
 	}
 	p, _ := s.State("fp")
-	if p.X != WorldW-1 {
-		t.Fatalf("east clamp failed: X=%d want %d", p.X, WorldW-1)
+	if p.X < 69 {
+		t.Fatalf("east roam failed: X=%d (50 steps from spawn 20)", p.X)
 	}
 	for i := 0; i < WorldH+10; i++ {
 		s.Move("fp", 0, -1)
 	}
 	p, _ = s.State("fp")
-	if p.Y != 0 {
-		t.Fatalf("north clamp failed: Y=%d", p.Y)
+	if p.Y >= 6 {
+		t.Fatalf("north roam failed: Y=%d", p.Y)
+	}
+	// and the served rect must have swallowed the new chunk span
+	if s.state.ww <= WorldW {
+		t.Fatalf("world did not grow: %dx%d", s.state.ww, s.state.wh)
 	}
 }
 

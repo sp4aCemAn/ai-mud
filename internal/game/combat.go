@@ -42,9 +42,9 @@ type Fight struct {
 // worldState is everything the Server owns beyond players. Guarded by
 // the same mutex as the player map.
 type worldState struct {
-	ww, wh      int // the currently served rect's SPAN (goes only up)
-	wx0, wy0    int // absolute coords of tiles[0][0] (infinite-plane math)
-	seed        int64               // the world's generation seed
+	ww, wh      int                   // the currently served rect's SPAN (goes only up)
+	wx0, wy0    int                   // absolute coords of tiles[0][0] (infinite-plane math)
+	seed        int64                 // the world's generation seed
 	chunks      map[chunkKey][]string // chunk cache (genChunk memo)
 	tiles       []string
 	spawnX      int
@@ -57,6 +57,7 @@ type worldState struct {
 	fights      map[string]*Fight   // fingerprint → open fight
 	shops       map[string]bool     // fingerprint → store open
 	lastEvents  map[string][]string // fingerprint → latest log lines
+	flat        bool                // debug flat mode (all walkable floor; growth too)
 	rnd         *rand.Rand
 	maxGroups   int
 	ticks       int
@@ -87,10 +88,10 @@ func enemyHP(r *rand.Rand, count, level int) (int, int) {
 
 // spawnWorld generates terrain (at ww×wh) and populates it with the
 // default autoplay content (merchant near spawn + a few groups).
-// Called at server construction and on Resize for seed-env worlds;
-// persisted worlds route through spawnWorldBase + replayContent.
-func spawnWorld(s *Server, r *rand.Rand, ww, wh int, genBase uint64) {
-	spawnWorldBase(s, r, ww, wh)
+// Called at server construction for seed-env worlds; persisted worlds
+// route through spawnWorldBase + replayContent.
+func spawnWorld(s *Server, seed int64, ww, wh int, genBase uint64) {
+	spawnWorldBase(s, seed, ww, wh)
 	populateDefaultWorld(s)
 	w := s.state
 	w.version = genBase
@@ -350,6 +351,8 @@ func (s *Server) worldSnapshot() World {
 	out := World{
 		W:       w.ww,
 		H:       w.wh,
+		OriginX: w.wx0,
+		OriginY: w.wy0,
 		Version: w.version,
 		Tiles:   make([]string, len(w.tiles)),
 		SpawnX:  w.spawnX,

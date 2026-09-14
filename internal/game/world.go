@@ -1,9 +1,5 @@
 package game
 
-import (
-	"math/rand"
-)
-
 // The world: one bounded field drawn as ASCII. Terrain comes from a
 // coarse noise grid blurred with a separable Gaussian — ' ' renders
 // water (impassable), everything else is walkable. All interactive
@@ -31,11 +27,12 @@ const (
 
 // World is the UI-facing snapshot of the terrain and its dots.
 type World struct {
-	W, H           int // the field is W×H tiles (dynamic; not the consts)
-	Version        uint64
-	Tiles          []string
-	Dots           []Dot
-	SpawnX, SpawnY int
+	W, H             int // the served rect's SPAN (grows as players roam)
+	OriginX, OriginY int // absolute coords of Tiles[0][0]
+	Version          uint64
+	Tiles            []string
+	Dots             []Dot
+	SpawnX, SpawnY   int
 }
 
 // Dot is one rendered world marker — a group of enemies shares one dot
@@ -136,14 +133,10 @@ func walkable(tiles []string, x, y int) bool {
 	return []rune(tiles[y])[x] != tileWater
 }
 
-// mainRegion returns the largest connected land region's tiles — the
-// no-dead-ends guarantee: spawn, merchant and enemies all place on it.
-// IsWideGlyph reports glyphs that paint two terminal cells (CJK). The
-// UI's field renderer needs this for column math (splices land on
-// display cells, not rune slots).
-func IsWideGlyph(r rune) bool {
-	return r == tileGate
-}
+// TileGate is the exported gate glyph (町) — the world's canonical
+// authoring kanji; the UI renders it as a 1-cell '#' block (wide-cell
+// paint is ambiguous across SSH clients).
+const TileGate = tileGate
 
 // mainRegion returns the largest connected land region's tiles — the
 // no-dead-ends guarantee: spawn, merchant and enemies all place on it.

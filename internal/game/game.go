@@ -10,7 +10,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"os"
 	"strconv"
 	"sync"
@@ -65,6 +64,7 @@ func NewServer() *Server {
 		players:   make(map[string]*Player),
 	}
 	spawnWorld(s, seed, WorldW, WorldH, 0)
+	s.landSpawnRing()
 	slog.Info("world generated", "size", fmt.Sprintf("%dx%d", WorldW, WorldH),
 		"spawn", fmt.Sprintf("%d,%d", s.state.spawnX, s.state.spawnY),
 		"seed", seed)
@@ -73,9 +73,9 @@ func NewServer() *Server {
 
 // regenWorld is retired by the infinite plane: terrain never rebuilds —
 // the world grows chunk-wise when players roam past the served rect.
-// The call remains as a view-hint no-op for legacy resize flows.
-func (s *Server) regenWorld(w, h int) {
-	ww, wh := dim(w, MinW, MaxW), dim(h, MinH, MaxH)
+// The call remains as a grow-hint for legacy resize flows.
+func (s *Server) regenWorld(pw, ph int) {
+	ww, wh := dim(pw, MinW, MaxW), dim(ph, MinH, MaxH)
 	if s.state != nil && s.state.ww == ww && s.state.wh == wh {
 		return // no-op: same size, keep the world stable
 	}
@@ -83,8 +83,7 @@ func (s *Server) regenWorld(w, h int) {
 	s.playersMu.Lock()
 	defer s.playersMu.Unlock()
 
-	// the world GROWS to fit a bigger board and never shrinks: absorbing
-	// (anchoring at the old rect's corners) re-uses the chunk plane
+	// the world GROWS to fit a bigger board and never shrinks
 	w := s.state
 	wWW, wWH := w.ww, w.wh
 	newW, newH := max(ww, wWW), max(wh, wWH)
@@ -92,8 +91,9 @@ func (s *Server) regenWorld(w, h int) {
 		return
 	}
 	versionBefore := w.version
-	s.absorbInto(newW-1, newH-1)
-	w.replayContentReared(versionBefore)
+	s.absorbInto(newW-1, newH-1, 0, 0)
+	s.replayContentReared(versionBefore)
+	s.landSpawnRing()
 	// players keep their positions (the world only grew)
 	s.state.setEvent("global", "the land ripples — reaching farther, never smaller")
 	slog.Info("world grew", "size", fmt.Sprintf("%dx%d", w.ww, w.wh))

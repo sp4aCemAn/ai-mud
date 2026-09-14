@@ -37,10 +37,10 @@ func (s SpawnEnemyGroupSpec) valid(w *worldState) error {
 	if (s.X == nil) != (s.Y == nil) {
 		return errors.New("both anchor coords required (or neither)")
 	}
-	if s.X != nil && (*s.X < 0 || *s.Y < 0 || *s.X >= w.ww || *s.Y >= w.wh) {
+	if s.X != nil && (*s.X < 0 || *s.Y < 0) {
 		return errors.New("anchor tile outside the world")
 	}
-	// tile must exist (water rejects too — the caller checks walkable)
+	// tiles beyond the current rect grow in on demand (infinite plane)
 	return nil
 }
 
@@ -57,7 +57,7 @@ func (s *Server) SpawnEnemyGroup(spec SpawnEnemyGroupSpec) (Enemy, error) {
 	x, y := 0, 0
 	if spec.X == nil || spec.Y == nil {
 		x, y = w.randomSpot()
-	} else if !walkable(w.tiles, *spec.X, *spec.Y) {
+	} else if !w.walkableAt(*spec.X, *spec.Y) {
 		return Enemy{}, errors.New("anchor tile is not walkable")
 	} else {
 		x, y = *spec.X, *spec.Y
@@ -133,6 +133,8 @@ func (s *Server) Announce(text string) {
 type WorldSummary struct {
 	W           int      `json:"w"`
 	H           int      `json:"h"`
+	OriginX     int      `json:"originX"` // abs coord of the served rect's corner
+	OriginY     int      `json:"originY"`
 	SpawnX      int      `json:"spawnX"`
 	SpawnY      int      `json:"spawnY"`
 	Version     uint64   `json:"version"`
@@ -150,6 +152,7 @@ func (s *Server) WorldSummary() WorldSummary {
 	w := s.state
 	out := WorldSummary{
 		W: w.ww, H: w.wh,
+		OriginX: w.wx0, OriginY: w.wy0,
 		SpawnX: w.spawnX, SpawnY: w.spawnY,
 		Version:   w.version,
 		MerchantX: w.npcDot.X, MerchantY: w.npcDot.Y,

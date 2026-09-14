@@ -104,10 +104,10 @@ func (s *Server) PlaceObject(spec ObjectSpec) (ObjectSummary, error) {
 	} else if spec.X == nil || spec.Y == nil {
 		x, y = w.pickRegionSpot(w.spawnX, w.spawnY, 3)
 	} else {
-		if *spec.X < 0 || *spec.Y < 0 || *spec.X >= w.ww || *spec.Y >= w.wh {
+		if *spec.X < 0 || *spec.Y < 0 {
 			return ObjectSummary{}, errors.New("anchor tile outside the world")
 		}
-		if !walkable(w.tiles, *spec.X, *spec.Y) {
+		if !w.walkableAt(*spec.X, *spec.Y) {
 			return ObjectSummary{}, errors.New("anchor tile is not walkable")
 		}
 		x, y = *spec.X, *spec.Y

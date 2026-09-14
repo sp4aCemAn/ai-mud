@@ -127,6 +127,58 @@ wipe; nothing product depends on it.
   `TestCameraSmallWorldStaysPut` (fully visible world never pans),
   `TestCameraFieldRendersDots` (enemy dot visible in the slice).
 
+## Infinite world (chunked plane)
+
+- `internal/game/terrain.go`: the world is now an **unbounded plane of
+  chunks** (`chunkSize=32`). Every tile is a pure function of
+  (world seed, absolute coords) — splitmix64 hash noise + bilinear
+  coarse lattice (one value per 2×2 tiles) + the same Gaussian blur
+  passes and `heightGlyph` thresholds the finite board used. No order
+  dependence: chunk N looks identical whenever it's generated, so
+  absorbs never take seams apart.
+- `internal/game/grow.go`: `absorbInto(nx, ny, dx, dy)` grows the served rect
+  in whole chunks per direction. Absolute coordinates NEVER shift (the
+  rect moves around the world); preserved tiles are copied verbatim;
+  authored terrain edits re-apply on top; the region recomputes to ABS
+  (local + origin). The world never shrinks. **Beach guarantee**: a
+  landing beach (±2 around the walker's row/col) is forced to land
+  through the ENTIRE fresh band along the step direction — chunk-gen
+  ocean wall at the seam can no longer pin a walker. **Spawn ring**:
+  `landSpawnRing()` runs at EVERY boot path (seed-env, persisted,
+  resize-grown) and forces the spawn's 4-neighborhood walkable — the
+  centroid pick can land on a 1-tile tongue fenced by lake, which
+  blocked the first step of the SSH movement smoke deterministically.
+- `internal/game/inf_roam_test.go`: `TestAbsorbBeach` pins the seam
+  beach for seeds {1, 42, 20260909, 7727}; natural water inside the
+  old rect stays legal terrain (oceans can still exist — roams can be
+  legitimately blocked inside a rect, just not seam-pinned).
+- `internal/game/player.go`: movement no longer clamps to edges —
+  walking past the rect calls `absorbInto` first, then walks (water
+  still blocks). `TestMoveExploresPastOldBounds` pins roam behavior.
+- `internal/game/combat.go`: `worldState` gained `wx0/wy0` (ABS of
+  `tiles[0][0]`), `seed`, `chunks` (genChunk memo), `flat` (debug).
+  `World` snapshots gained `OriginX/OriginY`; `WorldSummary` still
+  reports the current span.
+- `internal/game/persist.go`: `spawnWorldBase(seed,…)` boots any world
+  through `genBoard` — the base rect is a slice of the same plane, so
+  persisted and seed-env worlds share one generator. `genTerrain` and
+  the resize terrain ladder are retired; `Resize` only ever GROWS the
+  rect (`regenWorld` keeps player positions; content replays via
+  edits). `applyTerrainEdit` is origin-aware.
+- `internal/ui/game.go`: `panCamera` works in ABSOLUTE coords now
+  (clamp `[OriginX, OriginX+W-vw]`); `worldGlyph` translates absolute
+  → rect-local rows — **and no longer fills `'·'` for `x < 0`** (that
+  finite-era leftover guard painted a uniform forest wall over every
+  negative-absolute column west of the seam; negative coords are legal
+  now, only the rect-local bounds decide filler). **Row-width
+  normalization** in `buildField`: wide glyphs paint two cells, so
+  every row is padded to the pane's cell count — lipgloss's per-row
+  centering no longer jitters the map when a wide glyph scrolls past.
+- Verified live: deployed container boots the persisted world (120×60
+  span served), `ui_smoke.exp` + deployed contract suite green.
+- Tests: `TestMoveExploresPastOldBounds` (east+north roam, world grew),
+  camera suite rides grew bounds, smoke suites green un-touched.
+
 ## Stored API-level smokes: `tests/smokes/`
 
 | File | What it drives |

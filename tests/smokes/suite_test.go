@@ -89,8 +89,11 @@ func smokeSpawnReflects(t *testing.T, env smoketest.Env) {
 	if !found {
 		t.Fatalf("spawned group missing from world summary: %+v", after.EnemyNames)
 	}
-	if e.X < 0 || e.Y < 0 || e.X >= after.W || e.Y >= after.H {
-		t.Fatalf("spawned group out of bounds: %d,%d (world %dx%d)", e.X, e.Y, after.W, after.H)
+	// bounds are rect-local now (the infinite plane may serve negative abs)
+	if e.X < after.OriginX || e.Y < after.OriginY ||
+		e.X >= after.OriginX+after.W || e.Y >= after.OriginY+after.H {
+		t.Fatalf("spawned group out of served rect: %d,%d (rect %d..%d x %d..%d)",
+			e.X, e.Y, after.OriginX, after.OriginX+after.W, after.OriginY, after.OriginY+after.H)
 	}
 	if e.Count != 2 || e.Level != 1 || e.Name != "uX:harness-test-group" {
 		t.Fatalf("spec not honored: %+v", e)
@@ -133,13 +136,16 @@ func smokePlaceReadback(t *testing.T, env smoketest.Env) {
 	if obj.ID == 0 {
 		t.Fatal("placed object has no id")
 	}
+	var sum game.WorldSummary
+	env.Do("GET", "/api/world", nil, &sum)
 	rows := []game.ObjectSummary{}
 	env.Do("GET", "/api/world/objects?kind=enemy_group", nil, &rows)
 	found := false
 	for _, r := range rows {
 		if r.ID == obj.ID && r.Name == "smoke:authored-band" && r.Kind == "enemy_group" {
-			if r.X < 0 || r.Y < 0 {
-				t.Fatalf("placement readback has a negative anchor: %+v", r)
+			// anchors may be negative absolute coords now — must be in-rect
+			if r.X < sum.OriginX || r.Y < sum.OriginY {
+				t.Fatalf("placement readback outside the served rect: %+v", r)
 			}
 			found = true
 		}

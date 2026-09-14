@@ -36,6 +36,7 @@ func NewServerWorld(w WorldSpec) *Server {
 	spawnWorldBase(s, w.Seed, w.WW, w.WH)
 	s.objects = append(s.objects, w.Objects...)
 	s.replayContent()
+	s.landSpawnRing()
 	slog.Info("persisted world loaded", "name", w.Name, "seed", w.Seed,
 		"size", fmt.Sprintf("%dx%d", w.WW, w.WH), "objects", len(w.Objects))
 	return s
@@ -123,8 +124,18 @@ func (s *Server) replayContentReared(base uint64) {
 	// regen happens anymore; the record's dims were the BOOT rect.
 	w.enemies = map[int]*Enemy{}
 	w.npcDot = Dot{X: -1, Y: -1}
+	// the record's spawn only wins when it's still walkable on the
+	// chunk plane (the tile look changed when the plane replaced the
+	// finite generator — a stale spawn coordinate may be water now)
 	if spec.SpawnX > 0 || spec.SpawnY > 0 {
-		w.spawnX, w.spawnY = spec.SpawnX, spec.SpawnY
+		if w.walkableAt(spec.SpawnX, spec.SpawnY) {
+			w.spawnX, w.spawnY = spec.SpawnX, spec.SpawnY
+		} else {
+			sx, sy := pickSpawn(w.tiles, w.ww, w.wh)
+			w.spawnX, w.spawnY = sx, sy
+			slog.Warn("persisted spawn lands in water — using the region centroid",
+				"spawn", fmt.Sprintf("%d,%d", w.spawnX, w.spawnY))
+		}
 	}
 
 	// first pass: terrain edits (they can open or close tiles)

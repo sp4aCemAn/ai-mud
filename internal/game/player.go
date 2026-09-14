@@ -162,8 +162,11 @@ func (s *Server) interact(p *Player, dx, dy int) *Player {
 		return p
 	}
 
-	nx, ny := clamp(p.X+dx, 0, w.ww-1), clamp(p.Y+dy, 0, w.wh-1)
-	if !walkable(w.tiles, nx, ny) {
+	// the world is infinite: roaming past the served rect grows it a
+	// chunk at a time (the movement's requested tile must be covered)
+	s.absorbInto(p.X+dx, p.Y+dy, dx, dy)
+	nx, ny := p.X+dx, p.Y+dy
+	if !w.walkableAt(nx, ny) {
 		w.setEvent(p.Fingerprint, "the water is dark and deep — no crossing")
 		return p
 	}
