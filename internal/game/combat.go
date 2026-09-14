@@ -15,6 +15,7 @@ type Enemy struct {
 	Count     int
 	HP, MaxHP int
 	Level     int
+	ObjID     int64     // authored world_objects row (0 = live-only spawn)
 	respawnAt time.Time // zero while alive
 }
 

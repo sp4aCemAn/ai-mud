@@ -16,6 +16,7 @@ import (
 // the seed-env world (NewServer), so nothing in the game depends on a
 // database being present.
 type WorldSpec struct {
+	ID             int64 // worlds row (tool writes land here)
 	Name           string
 	Seed           int64
 	WW, WH         int
@@ -33,6 +34,7 @@ func NewServerWorld(w WorldSpec) *Server {
 		loaded:    &w,
 	}
 	spawnWorldBase(s, rand.New(rand.NewSource(w.Seed)), w.WW, w.WH)
+	s.objects = append(s.objects, w.Objects...)
 	s.replayContent()
 	slog.Info("persisted world loaded", "name", w.Name, "seed", w.Seed,
 		"size", fmt.Sprintf("%dx%d", w.WW, w.WH), "objects", len(w.Objects))
@@ -103,31 +105,33 @@ func (s *Server) replayContentReared(base uint64) {
 	w.npcDot = Dot{X: -1, Y: -1}
 
 	// first pass: terrain edits (they can open or close tiles)
-	var placements []storage.WorldObject
-	for _, o := range spec.Objects {
+	for _, o := range s.objects {
 		if o.Kind == storage.ObjectEdit {
 			applyTerrainEdit(w, o)
-			continue
 		}
-		placements = append(placements, o)
 	}
 	w.changed()
 
 	// second pass: dots, walkable-projected around their anchors
 	npcPlaced := false
-	for _, o := range placements {
+	for _, o := range s.objects {
+		if o.Kind == storage.ObjectEdit {
+			continue
+		}
 		x, y := project(w, o)
 		switch o.Kind {
 		case storage.ObjectEnemyGroup:
 			count, level := groupStats(o)
-			w.spawnEnemyAt(o.Name, count, level, x, y)
+			if e, ok := w.spawnEnemyAt(o.Name, count, level, x, y); ok {
+				e.ObjID = o.ID
+			}
 			w.changed()
 		case storage.ObjectMerchant, storage.ObjectVillage, storage.ObjectNPCGroup:
 			// one merchant dot is serviced by the shop engine; the
 			// first friendly placement takes the keeper position and
 			// later friendly rows await their own shop identities.
 			if !npcPlaced {
-				w.npcDot = Dot{X: x, Y: y, Kind: "npc", Count: 1, Name: o.Name}
+				w.npcDot = Dot{X: x, Y: y, Kind: "npc", Count: 1, Name: o.Name, ObjID: o.ID}
 				npcPlaced = true
 				w.changed()
 			}

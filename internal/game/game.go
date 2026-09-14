@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/sp4aceman/ai-mud/internal/storage"
 )
 
 // Session is the write-end of a connected player (SSH, web, etc).
@@ -42,6 +44,17 @@ type Server struct {
 
 	// loaded is the persisted-world spec (nil = classic seed-env flow).
 	loaded *WorldSpec
+
+	// wstore is the tool-write path to world_objects (nil = memory mode).
+	wstore WorldStore
+
+	// nextEphemeralID numbers placements when no store is attached
+	// (memory mode): negative, so they never collide with real rows.
+	nextEphemeral int64
+
+	// objects is the tool-authored placements this server owns: the
+	// persisted world's rows at boot plus every tool-placed row since.
+	objects []storage.WorldObject
 }
 
 func NewServer() *Server {

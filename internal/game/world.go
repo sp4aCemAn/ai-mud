@@ -45,6 +45,7 @@ type Dot struct {
 	Kind  string // "enemy" | "npc"
 	Count int
 	Name  string
+	ObjID int64 // authored row (tool placements; 0 = autoplay dot)
 }
 
 // dim clamps requested world dims to the play range.

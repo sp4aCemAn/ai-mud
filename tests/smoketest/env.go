@@ -83,6 +83,24 @@ func ping(base string) error {
 // Do performs one request and DECODES the JSON reply into out (out may
 // be nil). Fails the test on non-2xx or bad JSON.
 func (e Env) Do(method, path string, body any, out any) int {
+	got := e.raw(method, path, body, out)
+	if got >= 300 {
+		e.t.Fatalf("%s %s -> %d (body above)", method, path, got)
+	}
+	return got
+}
+
+// DoStatus performs one request and asserts a specific status (used
+// when a 4xx reply is the expected contract).
+func (e Env) DoStatus(method, path string, body any, out any, wantStatus int) int {
+	got := e.raw(method, path, body, out)
+	if got != wantStatus {
+		e.t.Fatalf("%s %s → %d, expected %d", method, path, got, wantStatus)
+	}
+	return got
+}
+
+func (e Env) raw(method, path string, body any, out any) int {
 	e.t.Helper()
 	var rd *bytes.Reader
 	if body != nil {
@@ -111,9 +129,6 @@ func (e Env) Do(method, path string, body any, out any) int {
 		if err := dec.Decode(out); err != nil {
 			e.t.Fatalf("%s %s -> %d: bad json: %v", method, path, res.StatusCode, err)
 		}
-	}
-	if res.StatusCode >= 300 {
-		e.t.Fatalf("%s %s -> %d (body above)", method, path, res.StatusCode)
 	}
 	return res.StatusCode
 }

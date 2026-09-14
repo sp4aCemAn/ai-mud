@@ -62,6 +62,7 @@ func main() {
 			slog.Warn("persisted world content unreachable, using seed flow", "err", err2)
 		} else {
 			gameServer = game.NewServerWorld(game.WorldSpec{
+				ID:      w.ID,
 				Name:    w.Name,
 				Seed:    w.Seed,
 				WW:      w.WW,
@@ -70,6 +71,7 @@ func main() {
 				SpawnY:  w.SpawnY,
 				Objects: objs,
 			})
+			gameServer.AttachWorldStore(store.Relational, w.ID)
 		}
 	} else if !errors.Is(err, storage.ErrNotFound) {
 		slog.Warn("active world lookup failed, using seed flow", "err", err)

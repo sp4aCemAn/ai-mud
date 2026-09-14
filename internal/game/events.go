@@ -1,9 +1,13 @@
 package game
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+
+	"github.com/sp4aceman/ai-mud/internal/storage"
 )
 
 // Spice is the tool-call surface: the harness (AI game master) and any
@@ -62,6 +66,21 @@ func (s *Server) SpawnEnemyGroup(spec SpawnEnemyGroupSpec) (Enemy, error) {
 	if !ok {
 		return Enemy{}, errors.New("no free tile near the anchor")
 	}
+	// tool spawns land in world_objects too, so resize/restart replays
+	// keep them (persistence failure is soft: the group stays live)
+	if s.wstore != nil {
+		data, _ := json.Marshal(map[string]int{"count": spec.Count, "level": spec.Level})
+		row := storage.WorldObject{
+			WorldID: s.worldID(), Kind: storage.ObjectEnemyGroup,
+			Name: spec.Name, HomeX: x, HomeY: y, Payload: data,
+		}
+		if err := s.wstore.UpsertObject(context.Background(), &row); err != nil {
+			slog.Warn("enemy group persisted live-only", "err", err)
+		} else {
+			e.ObjID = row.ID
+			s.objects = append(s.objects, row)
+		}
+	}
 	w.changed()
 	slog.Info("enemy group spawned", "name", e.Name, "at", fmt.Sprintf("%d,%d", e.X, e.Y), "source", "tool")
 	return *e, nil
@@ -77,7 +96,21 @@ func (s *Server) DespawnEnemy(id int) bool {
 		return false
 	}
 	name := w.enemies[id].Name
+	objID := w.enemies[id].ObjID
 	delete(w.enemies, id)
+	// the authored row drops with the live group (one authoritative
+	// removal — a replay will not resurrect it)
+	if objID != 0 && s.wstore != nil {
+		if err := s.wstore.DeleteObject(context.Background(), objID); err != nil {
+			slog.Warn("enemy row delete failed", "id", objID, "err", err)
+		}
+		for i, o := range s.objects {
+			if o.ID == objID {
+				s.objects = append(s.objects[:i], s.objects[i+1:]...)
+				break
+			}
+		}
+	}
 	w.changed()
 	slog.Info("enemy group despawned", "id", id, "name", name, "source", "tool")
 	return true

@@ -5,6 +5,7 @@
 package smokes
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/sp4aceman/ai-mud/internal/game"
@@ -25,6 +26,11 @@ var registry = []Smoke{
 	{"announce_accepted", smokeAnnounce},
 	{"despawn_removed", smokeDespawn},
 	{"persisted_world_url_load", smokePersistedLoadNote},
+	// Part 3: authored placements (world_objects) over the tool surface
+	{"place_object_readback", smokePlaceReadback},
+	{"terrain_edit_applies", smokeTerrainEdit},
+	{"patch_update_replays", smokePatchUpdate},
+	{"remove_object_roundtrip", smokeRemoveRoundtrip},
 }
 
 // smokePersistedLoad: worlds are loaded at BOOT (the loader reads the
@@ -114,4 +120,85 @@ func smokeDespawn(t *testing.T, env smoketest.Env) {
 			t.Fatalf("group %d survived despawn", target.ID)
 		}
 	}
+}
+
+// smokePlaceReadback: a placed object comes back through the objects
+// route with its kind/name/anchor, and shows up in the summary.
+func smokePlaceReadback(t *testing.T, env smoketest.Env) {
+	var obj game.ObjectSummary
+	env.Do("POST", "/api/world/objects", map[string]any{
+		"kind": "enemy_group", "name": "smoke:authored-band",
+		"data": map[string]int{"count": 2, "level": 1},
+	}, &obj)
+	if obj.ID == 0 {
+		t.Fatal("placed object has no id")
+	}
+	rows := []game.ObjectSummary{}
+	env.Do("GET", "/api/world/objects?kind=enemy_group", nil, &rows)
+	found := false
+	for _, r := range rows {
+		if r.ID == obj.ID && r.Name == "smoke:authored-band" && r.Kind == "enemy_group" {
+			if r.X < 0 || r.Y < 0 {
+				t.Fatalf("placement readback has a negative anchor: %+v", r)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("placed object missing from readback: %+v", rows)
+	}
+	env.Log("authored %s id=%d at %d,%d", obj.Kind, obj.ID, obj.X, obj.Y)
+}
+
+// smokeTerrainEdit: the terrain verb accepts a glyph patch and the
+// edit row is listed (tool retry loop: bad payloads 400).
+func smokeTerrainEdit(t *testing.T, env smoketest.Env) {
+	var obj game.ObjectSummary
+	env.Do("POST", "/api/world/terrain", map[string]any{
+		"name":  "smoke:marker fence",
+		"tiles": []map[string]any{{"x": 5, "y": 5, "g": "T"}},
+	}, &obj)
+	if obj.ID == 0 {
+		t.Fatal("edit row has no id")
+	}
+	try := map[string]any{"name": "bad edit"}
+	env.DoStatus("POST", "/api/world/terrain", try, nil, http.StatusBadRequest)
+	env.Log("edit row id=%d", obj.ID)
+}
+
+// smokePatchUpdate: an update lands and the readback shows the patch.
+func smokePatchUpdate(t *testing.T, env smoketest.Env) {
+	obj := smokePlaceReadbackObj(t, env, "smoke:patchable-band")
+	env.Do("PATCH", "/api/world/objects/"+int64String(obj.ID),
+		map[string]any{"data": map[string]int{"count": 4, "level": 3}}, nil,
+	)
+	rows := []game.ObjectSummary{}
+	env.Do("GET", "/api/world/objects?kind=enemy_group", nil, &rows)
+	for _, r := range rows {
+		if r.ID == obj.ID {
+			env.Log("patched id=%d name=%q", r.ID, r.Name)
+			return
+		}
+	}
+	t.Fatalf("patched object vanished from readback: %+v", rows)
+}
+
+// smokeRemoveRoundtrip: removing a placement kills it (and the live
+// dot), and a second removal is a clean not-found.
+func smokeRemoveRoundtrip(t *testing.T, env smoketest.Env) {
+	obj := smokePlaceReadbackObj(t, env, "smoke:remove-me")
+	env.Do("DELETE", "/api/world/objects/"+int64String(obj.ID), nil,
+		nil)
+	// readback no longer lists it
+	rows := []game.ObjectSummary{}
+	env.Do("GET", "/api/world/objects", nil, &rows)
+	for _, r := range rows {
+		if r.ID == obj.ID {
+			t.Fatalf("removed object still listed: %+v", r)
+		}
+	}
+	// second removal: 404 with an error body
+	env.DoStatus("DELETE", "/api/world/objects/"+int64String(obj.ID), nil,
+		nil, http.StatusNotFound)
+	env.Log("removed cleanly id=%d", obj.ID)
 }

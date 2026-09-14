@@ -35,5 +35,35 @@ func spawnRef(t *testing.T, env smoketest.Env, spec game.SpawnEnemyGroupSpec) ga
 	return e
 }
 
-// int64String formats an integer id for path building.
-func int64String(n int) string { return fmt.Sprintf("%d", n) }
+// int64String formats an id of either width for path building.
+func int64String[T ~int | ~int64](n T) string { return fmt.Sprintf("%d", n) }
+
+// worldObjects snapshots the authored placements via the objects route.
+func worldObjects(t *testing.T, env smoketest.Env, kinds ...string) []game.ObjectSummary {
+	t.Helper()
+	path := "/api/world/objects"
+	if len(kinds) > 0 {
+		path += "?kind=" + kinds[0]
+	}
+	var rows []game.ObjectSummary
+	env.Do("GET", path, nil, &rows)
+	return rows
+}
+
+// placeObject places one authored row and returns its readback.
+func placeObject(t *testing.T, env smoketest.Env, body map[string]any) game.ObjectSummary {
+	t.Helper()
+	var obj game.ObjectSummary
+	env.Do("POST", "/api/world/objects", body, &obj)
+	return obj
+}
+
+// smokePlaceReadbackObj is the patch/remove smokes' lean helper: place
+// one anchored enemy group under a distinctive name.
+func smokePlaceReadbackObj(t *testing.T, env smoketest.Env, name string) game.ObjectSummary {
+	t.Helper()
+	return placeObject(t, env, map[string]any{
+		"kind": "enemy_group", "name": name,
+		"data": map[string]int{"count": 2, "level": 1},
+	})
+}

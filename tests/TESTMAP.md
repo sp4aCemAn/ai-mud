@@ -74,11 +74,42 @@ wipe; nothing product depends on it.
 - Tests: `internal/game/persist_test.go` (content replay, merchant
   placement, resize round-trips).
 
+## World persistence (Part 3: tool surface)
+
+- `internal/game/tools.go`: the place/edit/remove verbs —
+  `PlaceObject` / `TerrainEdit` / `UpdateObject` / `RemoveObject` /
+  `Objects(kinds…)`. A row is written through `WorldStore` FIRST
+  (source of truth) then applied live (`applyObject`); fields live in
+  the Server (`objects` list, `wstore`, negative `nextEphemeral` ids in
+  memory mode so patch/remove stay addressable without SQL).
+- Guarantees baked in: anchors re-validated at tool time (in-bounds,
+  walkable; edits skip the anchor check and carry `{x,y,g}` deltas);
+  an anchor-less placement lands on a region spot and STILL records its
+  real coords on the row (`row.HomeX/HomeY` set after landing).
+  Removal is idempotent: an already-gone row doesn't block dropping
+  the live form, and a second call is a clean not-found. `Resize`/boot
+  replay the tool rows like any authored content.
+- `events.go` reconciliation: `SpawnEnemyGroup` writes its row too
+  (payload `{count,level}`), and `DespawnEnemy` drops the authored row
+  with the live group — restarts/resize replays keep tool content.
+- HTTP (all under `/api/world`, in `internal/httpapi/tools.go`):
+  `GET/POST /objects`, `PATCH/DELETE /objects/{id}`,
+  `POST /terrain {name, tiles:[{x,y,g}]}`.
+- `cmd/app/server/main.go`: `AttachWorldStore(store.Relational, w.ID)`
+  after the loader — memory mode (no DB) keeps tools live-only.
+- Verified live (committed-smoke envs): real-DB write-through with
+  correct home coords, restart round-trip (tool rows replay), SQL-side
+  delete then tool DELETE reconciles without a restart.
+- Tests: `internal/game/tools_test.go` (fake store: place/apply,
+  terrain edit replay after resize, update+remove round-trip with
+  no-double-free, bad-spec rejections, seed-flow stays memory-only) and
+  the API smokes in `tests/smokes/` (see below).
+
 ## Stored API-level smokes: `tests/smokes/`
 
 | File | What it drives |
 |---|---|
-| `suite_test.go` | `TestSmokeSuite` — registered scenarios against the tool-call surface of the HTTP API (`/api/world/*`): world summary sanity, tool-spawn a hostile group and read it back (name/count/level + bounds), announce, despawn round-trip. |
+| `suite_test.go` | `TestSmokeSuite` — registered scenarios against the tool-call surface of the HTTP API (`/api/world/*`): world summary sanity, tool-spawn a hostile group and read it back (name/count/level + bounds), announce, despawn round-trip; Part 3 authored placements: place readback (`place_object_readback`), terrain `POST /terrain` glyph rows + bad-payload 400 (`terrain_edit_applies`), `PATCH` update (`patch_update_replays`), `DELETE` remove + idempotent second removal (`remove_object_roundtrip`). |
 | `smoketest/` (framework) | `Env` client: targets a live deployed server when `GAME_SMOKE_URL` is set (contract mode — smoke what's deployed), otherwise spins an in-process standalone stack (game + httpapi, memory accounts). `GAME_SMOKE_LIVE_ONLY=1` forbids the standalone path. This is the home of future *stored* smokes — whenever a feature lands, register a smoke here rather than writing another ad-hoc expect script. SSH-level smokes stay in `tests/smoke/*.exp`. |
 
 Run it:
@@ -91,6 +122,8 @@ Run it:
 | File | Package | Covers |
 |---|---|---|
 | `internal/game/player_test.go` | game | join idempotency per fingerprint, spawn placement, world-bound clamps, unknown-player moves, stale reaper, Leave |
+| `internal/game/persist_test.go` | game | Part 2 loader: authored content replay (enemy stats, merchant dot from a hostile-terrain anchor, summary agreement), resize replay round-trips |
+| `internal/game/tools_test.go` | game | Part 3 verbs against a fake store: place+apply with row write-through, first-friendly-takes-dot, terrain edit + post-resize glyph replay, update/remove round-trip (no double-free on re-run), bad-spec rejections (unknown kind, no name, out-of-bounds/water anchor), seed-flow stays memory-only with negative ephemeral ids |
 | `internal/game/world_test.go` | game | terrain generation: main-region reachability over 30 seeds (the no-dead-ends guarantee), water blocking + events, fight lifecycle (bump→fight→kill→loot), death→respawn with purse split, store purchase + close, tick regen |
 | `internal/auth/auth_test.go` | auth | templated Provider seam (lookup/create/idempotency), fingerprint derivation, JSON stop-gap store (atomic file writes, key lookup) |
 | `internal/auth/accounts_test.go` | auth | memory-mode accounts: auto-account minting, password check, credential conflicts; **`TestLoginStealsKeyBoundToAnotherAccount`** — password login from a device whose fp is bound elsewhere moves the binding (old account stripped, index re-pointed) |
