@@ -159,6 +159,25 @@ Integration runs:
     STORAGE_INTEGRATION=1 go test ./internal/storage -count=1
     go test ./... -count=1
 
+## Towns (slice 1: the gate glyph)
+
+- `internal/game/world.go`: `tileGate = '町'` (machi, the town kanji)
+  joins the terrain glyph vocabulary — walkable like everything that
+  isn't water; `IsWideGlyph` (game-side, shared with the UI) reports
+  the two-cell render width. Today it's paint-only: stepping on it
+  walks, nothing reads it as a door yet.
+- `internal/ui/game.go`: width-aware field math — `glyphCellWidth` +
+  `cellsBefore` translate rune-indexed world tiles to display cells;
+  the `@` splice is cell-anchored, and over a wide glyph the `@`
+  claims both cells ("@ " two-cell replacement) so rows never shift.
+- Tests: `TestGateGlyphWalkableAndPainted` (paint via a `kind=edit`
+  row through `PlaceObject`, walk onto it, `@` composites with the
+  two-cell claim, row display width stays aligned),
+  `TestGlyphCellWidth` (the width table + `IsWideGlyph` agreement).
+- Complexity bail-out documented per user note: the width handling is
+  ~40 lines total confined to the splice; if more CJK glyphs ever
+  arrive, generalize `IsWideGlyph` into a rune-width table
+
 ## SSH surface cheat-sheet (what the servers actually require)
 
 - `wish.WithPublicKeyAuth(accept-all)` + `NoClientAuthCallback` returning

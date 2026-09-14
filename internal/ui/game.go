@@ -506,14 +506,22 @@ func (g GameScreen) renderField() string {
 		return g.buildField(vw, vh) // no cache in this copy — miss is cheap
 	}
 	// composite @ over the cached block (cheap line surgery), at the
-	// CAMERA-relative position
+	// CAMERA-relative position — and cell-aware for wide glyphs
 	lines := strings.Split(g.terrainCache, "\n")
 	rx, ry := g.p.X-g.camX, g.p.Y-g.camY
 	if ry >= 0 && ry < len(lines) {
 		row := []rune(lines[ry])
-		if rx >= 0 && rx < len(row) && g.worldGlyph(g.p.X, g.p.Y) != '@' {
-			row[rx] = '@'
-			lines[ry] = string(row)
+		if rx < len(row) && g.worldGlyph(g.p.X, g.p.Y) != '@' && rx >= 0 {
+			cell := cellsBefore(row, rx)
+			// '@' paints one cell; over a wide glyph it must claim
+			// both (the original's width) or the whole row shifts
+			filler := ""
+			if glyphCellWidth(row[rx]) > 1 {
+				filler = " "
+			}
+			rewritten := append(row[:cell:cell], '@')
+			rewritten = append(rewritten, []rune(filler+string(row[rx+1:]))...)
+			lines[ry] = string(rewritten)
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -622,6 +630,27 @@ func (g GameScreen) worldGlyph(x, y int) rune {
 		return row[x]
 	}
 	return '·'
+}
+
+// glyphCellWidth is the display-cell width of one world glyph. CJK
+// blocks (the gate 町) paint two terminal cells; everything else is
+// one. The field rows stay rune-indexed, but splices and column-claims
+// translate through this (row display width can exceed its rune count).
+func glyphCellWidth(r rune) int {
+	if game.IsWideGlyph(r) {
+		return 2
+	}
+	return 1
+}
+
+// cellsBefore counts the display cells used by the first x tiles of a
+// rune row — the '@' splice lands on a CELL, not a rune slot.
+func cellsBefore(row []rune, x int) int {
+	c := 0
+	for i := 0; i < x && i < len(row); i++ {
+		c += glyphCellWidth(row[i])
+	}
+	return c
 }
 
 // renderLog keeps the last few lines of world events visible.

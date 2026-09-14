@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -483,5 +485,90 @@ func TestCameraFieldRendersDots(t *testing.T) {
 	if reli < 0 || len(row) <= reli || row[reli] != 'x' {
 		t.Fatalf("enemy dot missing from visible slice at %d,%d (cam %d,%d): %q",
 			x0, y0, gs.camX, gs.camY, string(row))
+	}
+}
+
+// --- town gate (町) ----------------------------------------------------------
+
+func gateRow(t *testing.T, g GameScreen, yWorld int) []rune {
+	t.Helper()
+	lines := strings.Split(g.renderField(), "\n")
+	ry := yWorld - g.camY
+	if ry < 0 || len(lines) <= ry {
+		t.Fatalf("gate row %d out of the viewport", yWorld)
+	}
+	return []rune(lines[ry])
+}
+
+func displayWidth(row []rune) int {
+	w := 0
+	for _, r := range row {
+		w += glyphCellWidth(r)
+	}
+	return w
+}
+
+func TestGateGlyphWalkableAndPainted(t *testing.T) {
+	r, world := gameScreenAfterJoin(t)
+	gs := activeScreen(r.(Router)).(GameScreen)
+	sum := gs.world
+	spawnX, spawnY := sum.SpawnX, sum.SpawnY
+
+	// paint the kanji gate one tile east of spawn (authored edit row)
+	if _, err := world.PlaceObject(game.ObjectSpec{
+		Kind:  "edit",
+		Tiles: json.RawMessage(fmt.Sprintf(`[{"x":%d,"y":%d,"g":"町"}]`, spawnX+1, spawnY)),
+	}); err != nil {
+		t.Fatalf("paint gate: %v", err)
+	}
+	r, _ = r.Update(stateTickMsg{}) // pull the new version into the screen
+	gs = activeScreen(r.(Router)).(GameScreen)
+
+	rowBefore := gateRow(t, gs, spawnY)
+	wideIdx := spawnX + 1 - gs.camX
+	if rowBefore[wideIdx] != '町' {
+		t.Fatalf("gate glyph not painted into the slice: %q", string(rowBefore))
+	}
+	if w := displayWidth(rowBefore); w != game.WorldW+1 {
+		t.Fatalf("row with the wide gate must claim one extra cell: width=%d want=%d", w, game.WorldW+1)
+	}
+
+	// stepping onto 町 is walkable
+	r = drive(t, r, "l")
+	gs = activeScreen(r.(Router)).(GameScreen)
+	if gs.p.X != spawnX+1 || gs.p.Y != spawnY {
+		t.Fatalf("walking onto the gate should land the player there: (%d,%d)", gs.p.X, gs.p.Y)
+	}
+	field := gs.renderField()
+	lines := strings.Split(field, "\n")
+	rowOver := []rune(lines[spawnY-gs.camY])
+	// '@' now sits on the wide glyph — the row must stay width-aligned
+	// (the @ claims both cells so the rest of the row doesn't shift)
+	if w := displayWidth(rowOver); w != game.WorldW+1 {
+		t.Fatalf("row under the player must keep its cell width: %d want %d", w, game.WorldW+1)
+	}
+	// '@' takes the gate tile's first display cell, filler keeps the
+	// second (cells, not rune slots)
+	overIdx := cellsBefore(rowOver, gs.p.X-gs.camX)
+	if overIdx+1 >= len(rowOver) || rowOver[overIdx] != '@' || rowOver[overIdx+1] != ' ' {
+		t.Fatalf("@ must claim the gate's two cells: %q", string(rowOver))
+	}
+	if displayWidth(rowOver) != game.WorldW+1 {
+		t.Fatalf("display width must stay aligned: %d", displayWidth(rowOver))
+	}
+	if displayWidth(rowBefore) != displayWidth(rowOver) {
+		t.Fatalf("splice must not change row display width")
+	}
+}
+
+func TestGlyphCellWidth(t *testing.T) {
+	if glyphCellWidth('町') != 2 {
+		t.Fatal("the gate kanji should claim two cells")
+	}
+	if glyphCellWidth('x') != 1 || glyphCellWidth('~') != 1 {
+		t.Fatal("plain glyphs stay one cell")
+	}
+	if !game.IsWideGlyph('町') || game.IsWideGlyph('m') {
+		t.Fatal("IsWideGlyph disagrees with the ui table")
 	}
 }

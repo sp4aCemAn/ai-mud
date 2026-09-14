@@ -64,6 +64,11 @@ const (
 	tileShore  = '.'
 	tileField  = ','
 	tileForest = '·'
+	// tileGate is the town gate (町, machi — the town kanji). It
+	// paints TWO terminal cells wide; the UI's slice renderer does
+	// width-aware math for it (see internal/ui game.go). Walkable —
+	// the future enter-town tile (nothing uses it yet beyond paint).
+	tileGate = '町'
 )
 
 // blur2D runs the separable blur over a float field.
@@ -155,6 +160,15 @@ func walkable(tiles []string, x, y int) bool {
 		return false
 	}
 	return []rune(tiles[y])[x] != tileWater
+}
+
+// mainRegion returns the largest connected land region's tiles — the
+// no-dead-ends guarantee: spawn, merchant and enemies all place on it.
+// IsWideGlyph reports glyphs that paint two terminal cells (CJK). The
+// UI's field renderer needs this for column math (splices land on
+// display cells, not rune slots).
+func IsWideGlyph(r rune) bool {
+	return r == tileGate
 }
 
 // mainRegion returns the largest connected land region's tiles — the
