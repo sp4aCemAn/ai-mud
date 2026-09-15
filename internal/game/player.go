@@ -122,6 +122,7 @@ func (s *Server) Leave(fingerprint string) {
 	delete(s.state.fights, fingerprint)
 	delete(s.talks, fingerprint)
 	delete(s.stays, fingerprint)
+	delete(s.stayOffers, fingerprint)
 }
 
 // State implements PlayerView.
@@ -166,7 +167,7 @@ func (s *Server) Interact(fp string, dx, dy int) Result {
 	if talk := s.talks[fp]; talk != nil {
 		r.Talk = talk
 	}
-	if stay := s.stays[fp]; stay != nil {
+	if stay := s.stayMirror(fp); stay != nil {
 		r.Stay = stay
 	}
 	r.Quests = append(r.Quests, np.quests...)
@@ -231,6 +232,8 @@ func (s *Server) lockedInteract(p *Player, dx, dy int) *Player {
 
 	p.X, p.Y = nx, ny
 	p.lastSeen = time.Now()
+	// a step leaves the innkeeper's standing menu behind
+	delete(s.stayOffers, p.Fingerprint)
 	return p
 }
 
@@ -296,6 +299,13 @@ func (s *Server) Command(fp string, cmd string, arg int) Result {
 		w.setEvent(fp, "you walk away mid-sentence")
 	case "stay-cancel": // esc during the sleep sequence
 		s.cancelStay(p)
+	case "stay-accept": // enter on the innkeep's standing menu
+		if off := s.stayOffers[fp]; off != nil {
+			delete(s.stayOffers, fp)
+			s.acceptStay(p, off)
+		}
+	case "stay-decline": // esc on the offer — nothing was ever spent
+		s.declineStay(p)
 	case "noop", "attack", "cast", "flee":
 		if cmd == "noop" {
 			r := Result{Player: copyPlayer(p), World: s.currentWorld(fp)}
@@ -304,6 +314,12 @@ func (s *Server) Command(fp string, cmd string, arg int) Result {
 			}
 			if open, _ := s.openShopLocked(p); open {
 				r.Shop = shopOpen(p)
+			}
+			if talk := s.talks[fp]; talk != nil {
+				r.Talk = talk
+			}
+			if stay := s.stayMirror(fp); stay != nil {
+				r.Stay = stay
 			}
 			r.Events = w.lastEvents[fp]
 			return r
@@ -331,7 +347,7 @@ func (s *Server) Command(fp string, cmd string, arg int) Result {
 	if talk := s.talks[fp]; talk != nil {
 		r.Talk = talk
 	}
-	if stay := s.stays[fp]; stay != nil {
+	if stay := s.stayMirror(fp); stay != nil {
 		r.Stay = stay
 	}
 	r.Quests = append(r.Quests, r.Player.quests...)

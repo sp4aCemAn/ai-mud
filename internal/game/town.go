@@ -344,10 +344,15 @@ func (s *Server) inTownInteract(p *Player, dx, dy int) *Player {
 		w.setEvent(p.Fingerprint, "the house wall blocks your way")
 		return p
 	}
-	// NPC bump = open the talk session (the UI's overlay mirrors it)
+	// NPC bump = the role decides (slice 4: the innkeep offers a bed
+	// standing — the coin waits for the accept; everyone else talks)
 	for i := range t.Dots {
 		if t.Dots[i].X == nx && t.Dots[i].Y == ny {
-			s.openTalk(p, t, i)
+			if t.Dots[i].Role == "innkeep" {
+				s.offerStay(p, t, i)
+			} else {
+				s.openTalk(p, t, i)
+			}
 			return p
 		}
 	}
@@ -357,6 +362,8 @@ func (s *Server) inTownInteract(p *Player, dx, dy int) *Player {
 	}
 	p.X, p.Y = nx, ny
 	p.lastSeen = time.Now()
+	// a step leaves the innkeeper's standing menu behind
+	delete(s.stayOffers, p.Fingerprint)
 	return p
 }
 

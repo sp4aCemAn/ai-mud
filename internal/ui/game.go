@@ -226,9 +226,20 @@ func (g GameScreen) keyInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return g, nil
 
 	case g.stay != nil:
-		// sleep is modal: esc climbs out (coins stay spent)
-		if c != nil && msg.String() == "esc" {
-			g.applyStay(c.Command(g.fp, "stay-cancel", 0))
+		// sleep is modal: an offer waits for the choice; once the
+		// sleep is running esc climbs out (coins stay spent)
+		if c != nil {
+			switch {
+			case g.stay.Offer:
+				switch msg.String() {
+				case "enter":
+					g.applyStay(c.Command(g.fp, "stay-accept", 0))
+				case "esc":
+					g.applyStay(c.Command(g.fp, "stay-decline", 0))
+				}
+			case msg.String() == "esc":
+				g.applyStay(c.Command(g.fp, "stay-cancel", 0))
+			}
 		}
 		return g, nil
 
@@ -455,7 +466,11 @@ func (g GameScreen) View() string {
 	case g.talk != nil:
 		hintTxt = "[enter] next line · esc walk away"
 	case g.stay != nil:
-		hintTxt = "asleep… [esc] climb out"
+		if g.stay.Offer {
+			hintTxt = fmt.Sprintf("%s — a bed takes %d · [enter] rest · [esc] decline", g.stay.Keeper, g.stay.Cost)
+		} else {
+			hintTxt = "asleep… [esc] climb out"
+		}
 	case g.inv:
 		hintTxt = "u/m use · esc close"
 	}
@@ -828,11 +843,17 @@ func shortFP(fp string) string {
 	return fp
 }
 
-// renderStay is the sleep overlay: the current staged line + the
+// renderStay is the innkeeper's overlay: an Offer shows the standing
+// menu (accept/decline); a running stay shows the staged line + the
 // healing promise; the game tick drives the stages (esc climbs out).
 func renderStay(st *game.Stay) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s's inn\n\n", st.TownName)
+	if st.Offer {
+		fmt.Fprintf(&b, "%s: \"a bed takes %d coins — sleep until dawn?\"\n\n", st.Keeper, st.Cost)
+		b.WriteString(hint("[enter] sleep · [esc] decline"))
+		return Panel{Title: "Rest", Content: b.String()}.Render()
+	}
 	if st.Stage < len(st.Lines) {
 		b.WriteString(hint(st.Lines[st.Stage]))
 	}

@@ -69,6 +69,9 @@ type Server struct {
 
 	// stays: per-fingerprint sleep sequences (slice 4)
 	stays map[string]*Stay
+	// stayOffers: per-fingerprint standing menus — the innkeep's
+	// offer before the coin changes hands (slice 4)
+	stayOffers map[string]*Stay
 }
 
 func NewServer() *Server {

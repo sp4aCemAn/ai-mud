@@ -233,18 +233,25 @@ wipe; nothing product depends on it.
 
 ## Slice 4: the innkeeper's stay (`internal/game/stay.go`)
 
-- Bumping an **innkeep** NPC buys the stay: **5 coins up front**, then
-  the sleep sequence runs on the game tick — a staged line every
-  ~2s (5 stages over ~10s, `stayLines` + the opener), then a full
-  HP/mana restore. Movement is PINNED while asleep
-  (`sleepingLocked`); `esc` cancels early (`stay-cancel` command) —
-  the coins stay spent (the bed was taken), no partial heal.
-- State mirrors through `Result.Stay` (the UI's `g.stay` overlay:
-  the current stage's line + `sleeping n/m`), cleared server-side on
-  heal/cancel; `Leave` cleans the session.
+- Bumping an **innkeep** NPC opens the **standing menu** — no coin moves
+  yet: the offer (`Stay.Offer`) shows `a bed takes 5 coins — [enter]
+  sleep · [esc] decline`. **[enter]** buys the stay (**5 coins up
+  front**), **[esc] declines — nothing was ever spent**. A player short
+  on coin keeps nothing (the offer closes with the "you're short"
+  line). Taking ANY step clears a standing offer.
+- The bought stay runs the sleep sequence on the game tick — a staged
+  line every ~2s (5 stages over ~10s, `stayLines` + the opener), then a
+  full HP/mana restore. Movement is PINNED while asleep
+  (`sleepingLocked`); `esc` cancels mid-sleep (`stay-cancel`) — the
+  coins stay spent (the bed was taken), no partial heal.
+- State mirrors through `Result.Stay` (`stayMirror`: the running sleep
+  wins over the standing offer; the UI's `g.stay` overlay branches on
+  `Offer`), cleared server-side on heal/cancel; `Leave` cleans both.
 - Tests: `stay_test.go` — the full sequence through the real tick
-  (charge → pinned movement → heal to max), and the early-ESC path
-  (no heal, movement unpinned).
+  (charge → pinned movement → heal to max), the early-ESC path (no
+  heal, movement unpinned), and `TestInnkeepBumpBuysTheStay` (the real
+  bump dispatch: innkeep opens the standing menu not the talk; accept
+  charges; decline never spends; a step dismisses the menu).
 
 ## Stored API-level smokes: `tests/smokes/`
 

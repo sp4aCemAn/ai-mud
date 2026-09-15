@@ -21,10 +21,14 @@ var stayLines = []string{
 	"dawn creeps through the shutters",
 }
 
-// Stay is the UI-facing sleep state (mirrors Fight/Shop/Talk).
+// Stay is the UI-facing sleep state (mirrors Fight/Shop/Talk). With
+// Offer set it's the innkeeper's STANDING MENU — the coin hasn't
+// changed hands yet; enter accepts, esc declines.
 type Stay struct {
 	TownName  string
 	Keeper    string
+	Cost      int // the door price (only on the offer)
+	Offer     bool
 	Stage     int  // the currently shown line index (0..len-1)
 	Ticked    int  // ticks accumulated in the stage
 	Healed    bool // the completion flag: full HP/mana now
@@ -36,26 +40,49 @@ type Stay struct {
 func (st *Stay) CancelledOut() bool { return st.Cancelled }
 func (st *Stay) HealedOut() bool    { return st.Healed }
 
-// openStay: bumping the innkeeper buys the stay (5 coins upfront) and
-// starts the sleep sequence. The innkeeper talk pool already says the
-// rest is coming — this is the act.
-func (s *Server) openStay(p *Player, t *TownState, i int) {
+// offerStay: bumping the innkeep opens the standing menu — no coin
+// moves until the player accepts.
+func (s *Server) offerStay(p *Player, t *TownState, i int) {
 	npc := t.Dots[i]
+	if s.stayOffers == nil {
+		s.stayOffers = make(map[string]*Stay)
+	}
+	s.stayOffers[p.Fingerprint] = &Stay{
+		TownName: t.Name, Keeper: npc.Name, Cost: stayCost, Offer: true,
+	}
+	s.state.setEvent(p.Fingerprint, fmt.Sprintf("%s: \"a bed takes %d coins\"", npc.Name, stayCost))
+}
+
+// acceptStay: [enter] on the offer — the bed is bought and the sleep
+// sequence starts. A player short on coin keeps the offer open.
+func (s *Server) acceptStay(p *Player, off *Stay) {
+	w := s.state
 	if p.Coins < stayCost {
-		w := s.state
-		w.setEvent(p.Fingerprint, fmt.Sprintf("%s: \"the bed takes %d coins — you're short\"", npc.Name, stayCost))
+		delete(s.stayOffers, p.Fingerprint)
+		w.setEvent(p.Fingerprint, fmt.Sprintf("%s: \"the bed takes %d coins — you're short\"", off.Keeper, stayCost))
 		return
 	}
 	p.Coins -= stayCost
 	if s.stays == nil {
 		s.stays = make(map[string]*Stay)
 	}
-	stay := &Stay{
-		TownName: t.Name, Keeper: npc.Name,
+	s.stays[p.Fingerprint] = &Stay{
+		TownName: off.TownName, Keeper: off.Keeper,
 		Lines: append([]string{"you curl up in the straw by the hearth…"}, stayLines...),
 	}
-	s.stays[p.Fingerprint] = stay
-	s.state.setEvent(p.Fingerprint, fmt.Sprintf("%s takes %d coins — \"sleep well\"", npc.Name, stayCost))
+	w.setEvent(p.Fingerprint, fmt.Sprintf("%s takes %d coins — \"sleep well\"", off.Keeper, stayCost))
+}
+
+// declineStay: [esc] on the offer — nobody was committed to a bed, so
+// nothing was ever spent.
+func (s *Server) declineStay(p *Player) {
+	off, ok := s.stayOffers[p.Fingerprint]
+	if !ok {
+		return
+	}
+	delete(s.stayOffers, p.Fingerprint)
+	w := s.state
+	w.setEvent(p.Fingerprint, fmt.Sprintf("you keep your coin — %s goes back to wiping the bar", off.Keeper))
 }
 
 // advanceStaysLocked: the tick's sleep hook (called with the players
@@ -88,6 +115,15 @@ func (s *Server) advanceStaysLocked() {
 		delete(s.stays, fp)
 		slog.Info("stay completed", "town", stay.TownName, "fp", fp)
 	}
+}
+
+// stayMirror: the running sleep sequence wins; otherwise the standing
+// offer. The Result channels the right state to the UI's overlay.
+func (s *Server) stayMirror(fp string) *Stay {
+	if stay := s.stays[fp]; stay != nil {
+		return stay
+	}
+	return s.stayOffers[fp]
 }
 
 // cancelStay: ESC; the coins stay spent (the bed was taken), the rest
