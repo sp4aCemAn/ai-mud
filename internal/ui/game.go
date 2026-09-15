@@ -49,6 +49,7 @@ type GameScreen struct {
 	fight *game.Fight // live duel (nil = none)
 	shop  *game.Shop  // store overlay (nil = closed)
 	talk  *game.Talk  // open conversation (nil = none; slice 3)
+	stay  *game.Stay  // sleep sequence (nil = awake; slice 4)
 	inv   bool        // pack window open
 	log   []string    // latest world event lines
 
@@ -221,6 +222,13 @@ func (g GameScreen) keyInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case "esc":
 				g.applyTalk(c.Command(g.fp, "talk-close", 0))
 			}
+		}
+		return g, nil
+
+	case g.stay != nil:
+		// sleep is modal: esc climbs out (coins stay spent)
+		if c != nil && msg.String() == "esc" {
+			g.applyStay(c.Command(g.fp, "stay-cancel", 0))
 		}
 		return g, nil
 
@@ -405,6 +413,11 @@ func (g *GameScreen) apply(r game.Result) {
 	if r.Talk != nil {
 		g.talk = r.Talk
 	}
+	if r.Stay != nil {
+		g.stay = r.Stay
+	} else if g.stay != nil {
+		g.stay = nil // the sleep ended (healed or cancelled) server-side
+	}
 	g.log = append(g.log, r.Events...)
 	if len(g.log) > 3 {
 		g.log = g.log[len(g.log)-3:]
@@ -422,6 +435,11 @@ func (g *GameScreen) applyTalk(r game.Result) {
 	}
 }
 
+// applyStay mirrors the sleep path (esc); the tick drives the stages.
+func (g *GameScreen) applyStay(r game.Result) {
+	g.apply(r)
+}
+
 func (g GameScreen) View() string {
 	if g.width == 0 {
 		return "entering the world…"
@@ -436,6 +454,8 @@ func (g GameScreen) View() string {
 		hintTxt = "1-4 buy · esc leave"
 	case g.talk != nil:
 		hintTxt = "[enter] next line · esc walk away"
+	case g.stay != nil:
+		hintTxt = "asleep… [esc] climb out"
 	case g.inv:
 		hintTxt = "u/m use · esc close"
 	}
@@ -472,6 +492,8 @@ func (g GameScreen) View() string {
 		content = Overlay(content, renderFight(g.fight))
 	case g.talk != nil:
 		content = Overlay(content, renderTalk(g.talk))
+	case g.stay != nil:
+		content = Overlay(content, renderStay(g.stay))
 	case g.inv:
 		content = Overlay(content, renderPack(g.p))
 	}
@@ -804,4 +826,18 @@ func shortFP(fp string) string {
 		return "anonymous"
 	}
 	return fp
+}
+
+// renderStay is the sleep overlay: the current staged line + the
+// healing promise; the game tick drives the stages (esc climbs out).
+func renderStay(st *game.Stay) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s's inn\n\n", st.TownName)
+	if st.Stage < len(st.Lines) {
+		b.WriteString(hint(st.Lines[st.Stage]))
+	}
+	if !st.Healed {
+		b.WriteString(fmt.Sprintf("\nsleeping %d/%d", st.Stage+1, len(st.Lines)))
+	}
+	return Panel{Title: "Rest", Content: b.String()}.Render()
 }

@@ -121,6 +121,7 @@ func (s *Server) Leave(fingerprint string) {
 	delete(s.players, fingerprint)
 	delete(s.state.fights, fingerprint)
 	delete(s.talks, fingerprint)
+	delete(s.stays, fingerprint)
 }
 
 // State implements PlayerView.
@@ -165,6 +166,9 @@ func (s *Server) Interact(fp string, dx, dy int) Result {
 	if talk := s.talks[fp]; talk != nil {
 		r.Talk = talk
 	}
+	if stay := s.stays[fp]; stay != nil {
+		r.Stay = stay
+	}
 	r.Quests = append(r.Quests, np.quests...)
 	if f, open := s.state.fights[fp]; open {
 		r.Fight = fightCopy(f)
@@ -179,6 +183,12 @@ func (s *Server) Interact(fp string, dx, dy int) Result {
 // interact mutates p for the bump attempt; assumes lock held.
 func (s *Server) lockedInteract(p *Player, dx, dy int) *Player {
 	w := s.state
+
+	// the sleep pin: resting players can't walk (esc climbs out)
+	if s.sleepingLocked(p) {
+		w.setEvent(p.Fingerprint, "you're mid-sleep — [esc] climbs out")
+		return p
+	}
 
 	// a live fight pins the player to the duel — only flee/kill frees
 	if f, open := w.fights[p.Fingerprint]; open && f != nil {
@@ -284,6 +294,8 @@ func (s *Server) Command(fp string, cmd string, arg int) Result {
 	case "talk-close": // esc = walk away from the conversation
 		delete(s.talks, fp)
 		w.setEvent(fp, "you walk away mid-sentence")
+	case "stay-cancel": // esc during the sleep sequence
+		s.cancelStay(p)
 	case "noop", "attack", "cast", "flee":
 		if cmd == "noop" {
 			r := Result{Player: copyPlayer(p), World: s.currentWorld(fp)}
@@ -318,6 +330,9 @@ func (s *Server) Command(fp string, cmd string, arg int) Result {
 	}
 	if talk := s.talks[fp]; talk != nil {
 		r.Talk = talk
+	}
+	if stay := s.stays[fp]; stay != nil {
+		r.Stay = stay
 	}
 	r.Quests = append(r.Quests, r.Player.quests...)
 	r.Events = events

@@ -227,6 +227,7 @@ type Result struct {
 	Fight  *Fight // current combat, nil when out of it
 	Shop   *Shop  // open store, nil when none
 	Talk   *Talk  // open conversation, nil when none
+	Stay   *Stay  // the sleep sequence (slice 4), nil when awake
 	Quests []Quest
 	Events []string
 }

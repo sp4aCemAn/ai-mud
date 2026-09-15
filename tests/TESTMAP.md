@@ -231,6 +231,21 @@ wipe; nothing product depends on it.
   docdb overrides the payload (fake store). `TestUIDrivesTownDoor`
   (ui) still drives the real door path through the full pane stack.
 
+## Slice 4: the innkeeper's stay (`internal/game/stay.go`)
+
+- Bumping an **innkeep** NPC buys the stay: **5 coins up front**, then
+  the sleep sequence runs on the game tick — a staged line every
+  ~2s (5 stages over ~10s, `stayLines` + the opener), then a full
+  HP/mana restore. Movement is PINNED while asleep
+  (`sleepingLocked`); `esc` cancels early (`stay-cancel` command) —
+  the coins stay spent (the bed was taken), no partial heal.
+- State mirrors through `Result.Stay` (the UI's `g.stay` overlay:
+  the current stage's line + `sleeping n/m`), cleared server-side on
+  heal/cancel; `Leave` cleans the session.
+- Tests: `stay_test.go` — the full sequence through the real tick
+  (charge → pinned movement → heal to max), and the early-ESC path
+  (no heal, movement unpinned).
+
 ## Stored API-level smokes: `tests/smokes/`
 
 | File | What it drives |

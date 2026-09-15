@@ -66,6 +66,9 @@ type Server struct {
 
 	// narr: the docdb conversation layer (nil = payload + canned only)
 	narr NarrStore
+
+	// stays: per-fingerprint sleep sequences (slice 4)
+	stays map[string]*Stay
 }
 
 func NewServer() *Server {
@@ -182,6 +185,7 @@ func (s *Server) tick(n int) {
 	defer s.playersMu.Unlock()
 	w := s.state
 	w.ticks++
+	s.advanceStaysLocked()
 
 	// downtime: every 4 s, one HP; every 8 s, one mana.
 	for _, p := range s.players {
