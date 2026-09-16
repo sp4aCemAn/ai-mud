@@ -42,10 +42,13 @@ type Fight struct {
 // worldState is everything the Server owns beyond players. Guarded by
 // the same mutex as the player map.
 type worldState struct {
-	ww, wh      int                   // the currently served rect's SPAN (goes only up)
-	wx0, wy0    int                   // absolute coords of tiles[0][0] (infinite-plane math)
-	seed        int64                 // the world's generation seed
-	chunks      map[chunkKey][]string // chunk cache (genChunk memo)
+	ww, wh   int                   // the currently served rect's SPAN (goes only up)
+	wx0, wy0 int                   // absolute coords of tiles[0][0] (infinite-plane math)
+	seed     int64                 // the world's generation seed
+	chunks   map[chunkKey][]string // chunk cache (genChunk memo)
+	// settled: per-chunk population ledger (frontier queue) — values
+	// count authored entities; a chunk reaching settleCap is quiet ground
+	settled     map[chunkKey]int
 	tiles       []string
 	spawnX      int
 	spawnY      int
@@ -95,9 +98,26 @@ func enemyHP(r *rand.Rand, count, level int) (int, int) {
 func spawnWorld(s *Server, seed int64, ww, wh int, genBase uint64) {
 	spawnWorldBase(s, seed, ww, wh)
 	populateDefaultWorld(s)
+	s.seedSettled() // the boot rect starts settled; the frontier opens beyond
 	w := s.state
 	w.version = genBase
 	w.changed()
+}
+
+// seedSettled marks every chunk of the boot rect at the settle cap
+// — the world's starting ground stays quiet; the frontier opens only
+// as players walk past the record rect (both boot paths share this).
+func (s *Server) seedSettled() {
+	w := s.state
+	if w.settled == nil {
+		w.settled = map[chunkKey]int{}
+	}
+	for y := w.wy0; y < w.wy0+w.wh; y++ {
+		for x := w.wx0; x < w.wx0+w.ww; x++ {
+			cx, cy := chunkOf(x, y)
+			w.settled[chunkKey{cx, cy}] = settleCap
+		}
+	}
 }
 
 // populateDefaultWorld adds the autoplay content set to the world:

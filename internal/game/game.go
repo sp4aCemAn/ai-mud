@@ -79,6 +79,10 @@ type Server struct {
 	// same counter concurrently; buys stay per-player.
 	stores  map[string]*Store
 	storeOf map[string]string
+
+	// gmWake: the frontier door (1-buffer, coalescing) — the harness
+	// drains it via Poke() each cadence; explorers poke it instantly.
+	gmWake chan struct{}
 }
 
 func NewServer() *Server {
@@ -87,6 +91,7 @@ func NewServer() *Server {
 		sessions:  make(map[string]Session),
 		tickEvery: 500 * time.Millisecond,
 		players:   make(map[string]*Player),
+		gmWake:    make(chan struct{}, 1),
 	}
 	spawnWorld(s, seed, WorldW, WorldH, 0)
 	s.landSpawnRing()

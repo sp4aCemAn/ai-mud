@@ -31,12 +31,14 @@ func NewServerWorld(w WorldSpec) *Server {
 		sessions:  make(map[string]Session),
 		tickEvery: 500 * time.Millisecond,
 		players:   make(map[string]*Player),
+		gmWake:    make(chan struct{}, 1),
 		loaded:    &w,
 	}
 	spawnWorldBase(s, w.Seed, w.WW, w.WH)
 	s.objects = append(s.objects, w.Objects...)
 	s.replayContent()
 	s.landSpawnRing()
+	s.seedSettled() // the boot rect starts settled; the frontier opens beyond
 	slog.Info("persisted world loaded", "name", w.Name, "seed", w.Seed,
 		"size", fmt.Sprintf("%dx%d", w.WW, w.WH), "objects", len(w.Objects))
 	return s

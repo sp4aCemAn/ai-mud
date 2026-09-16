@@ -234,6 +234,7 @@ func (s *Server) lockedInteract(p *Player, dx, dy int) *Player {
 
 	p.X, p.Y = nx, ny
 	p.lastSeen = time.Now()
+	s.chunkVisit(nx, ny) // the frontier trigger: fresh chunks wake the GM
 	// a step leaves the innkeeper's standing menu and any counter
 	// browse behind
 	delete(s.stayOffers, p.Fingerprint)

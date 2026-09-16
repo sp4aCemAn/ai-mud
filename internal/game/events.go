@@ -23,7 +23,9 @@ type SpawnEnemyGroupSpec struct {
 	X, Y  *int   // anchor tile; nil = a random region spot (so tile 0 doesn't hide)
 }
 
-// Validate clamps and checks the spec against the live world.
+// valid clamps and checks the spec against the live world. The
+// SERVER's absorb/walkable rails run here (the owner method performs
+// the world touches; the value receiver only validates paths).
 func (s SpawnEnemyGroupSpec) valid(w *worldState) error {
 	if s.Name == "" {
 		return errors.New("name required")
@@ -37,7 +39,10 @@ func (s SpawnEnemyGroupSpec) valid(w *worldState) error {
 	if (s.X == nil) != (s.Y == nil) {
 		return errors.New("both anchor coords required (or neither)")
 	}
-	if s.X != nil && (*s.X < 0 || *s.Y < 0) {
+	if s.X != nil && !w.absNearServed(*s.X, *s.Y) {
+		// negative coords are LEGAL absolute coords on the infinite
+		// plane, but an anchor must sit AT or one chunk past the
+		// served rect (a galaxy-away point must not grow the plane)
 		return errors.New("anchor tile outside the world")
 	}
 	// tiles beyond the current rect grow in on demand (infinite plane)
@@ -66,6 +71,7 @@ func (s *Server) SpawnEnemyGroup(spec SpawnEnemyGroupSpec) (Enemy, error) {
 	if !ok {
 		return Enemy{}, errors.New("no free tile near the anchor")
 	}
+	s.bumpSettled(x, y) // the frontier ledger counts every landed group
 	// tool spawns land in world_objects too, so resize/restart replays
 	// keep them (persistence failure is soft: the group stays live)
 	if s.wstore != nil {
@@ -127,7 +133,9 @@ func (s *Server) Announce(text string) {
 	for fp := range s.players {
 		s.state.setEvent(fp, text)
 	}
-	s.gmNote("announce", text)
+	// N/B: not noted into the GM's roundup ring — the GM must never
+	// react to its own voice (the announce→event→announce loop is a
+	// runaway feedback cycle; the effect arrives at players, not the GM).
 	slog.Info("game master announces", "text", text)
 }
 

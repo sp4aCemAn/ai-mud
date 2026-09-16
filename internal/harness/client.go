@@ -102,8 +102,31 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 // --- POST /v1/chat/completions ---------------------------------------------
 
 type ChatMessage struct {
-	Role    string `json:"role"` // "system" | "user" | "assistant"
+	Role    string `json:"role"` // "system" | "user" | "assistant" | "tool"
 	Content string `json:"content"`
+}
+
+// FunctionSpec is one tool's OpenAI function shape (name + JSON schema).
+type FunctionSpec struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+}
+
+// ToolDef is one function-tool definition (OpenAI function-calling wire).
+type ToolDef struct {
+	Type     string       `json:"type"` // always "function"
+	Function FunctionSpec `json:"function"`
+}
+
+// ToolCall is one parsed tool invocation from a model reply.
+type ToolCall struct {
+	ID       string `json:"id,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"` // JSON-encoded param object
+	} `json:"function"`
 }
 
 type ChatRequest struct {
@@ -111,6 +134,11 @@ type ChatRequest struct {
 	Messages    []ChatMessage `json:"messages"`
 	Temperature float64       `json:"temperature,omitempty"`
 	MaxTokens   int           `json:"max_tokens,omitempty"`
+	// Tools + ToolChoice are the native function-calling wire; a
+	// backend without tool support just ignores them (the loop's
+	// fallback parse keeps serving).
+	Tools      []ToolDef `json:"tools,omitempty"`
+	ToolChoice string    `json:"tool_choice,omitempty"` // "auto"
 }
 
 type ChatResponse struct {
@@ -124,9 +152,20 @@ type ChatResponse struct {
 			// Studio) put their chain-of-thought here; content holds the
 			// visible answer. Reasoning tokens still count against max_tokens.
 			ReasoningContent string `json:"reasoning_content,omitempty"`
+			// ToolCalls: native function-calling replies (Cactus engine,
+			// OpenAI-compatible providers). Arguments is a JSON STR.
+			ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+}
+
+// ToolCalls returns the native tool calls when the model used tools.
+func (r *ChatResponse) ToolCalls() []ToolCall {
+	if len(r.Choices) == 0 {
+		return nil
+	}
+	return r.Choices[0].Message.ToolCalls
 }
 
 // Text returns the first choice's message content ("" if none).

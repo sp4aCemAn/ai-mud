@@ -15,9 +15,17 @@ services:
       # (service names as hostnames)
       - POSTGRES_DSN=postgres://aimud:aimud@postgres:5432/aimud?sslmode=disable
       - DOCUMENT_DSN=postgres://aimud:aimud@docdb:5432/aimud_docs?sslmode=disable
-      # localhost in the container is the container itself; this points the
-      # harness at services running on the Mac host (e.g. LM Studio)
+      # localhost in the container is the container itself; these point the
+      # harness at services running on the Mac host.
+      # 1234 = LM Studio (google/gemma-4-e4b) — the GM PERSONA stage (lore)
+      # 1243 = `cactus serve google/gemma-4-E2B-it --no-cloud-handoff`
+      #         (build/cactus.sh start) — the INTERPRETER stage: it turns
+      #         the persona's decisions into native tool_calls. Cloud
+      #         handoff stays pinned OFF (local, deterministic GM).
       - HARNESS_BASE_URL=http://host.docker.internal:1234/v1
+      - HARNESS_MODEL=google/gemma-4-e4b
+      - HARNESS_INTERPRETER_BASE_URL=http://host.docker.internal:1243/v1
+      - HARNESS_INTERPRETER_MODEL=gemma-4-e2b-it-cq4
       # fixed world seed — smoke tests depend on a reproducible map
       - W_SEED=20260909
     volumes:

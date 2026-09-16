@@ -132,9 +132,13 @@ func (s *Server) PlaceObject(spec ObjectSpec) (ObjectSummary, error) {
 	} else if spec.X == nil || spec.Y == nil {
 		x, y = w.pickRegionSpot(w.spawnX, w.spawnY, 3)
 	} else {
-		if *spec.X < 0 || *spec.Y < 0 {
+		// negative coords are LEGAL absolute coords on the infinite
+		// plane — but an anchor must sit AT or one chunk past the
+		// served rect (a galaxy-away point must not grow the plane)
+		if !w.absNearServed(*spec.X, *spec.Y) {
 			return ObjectSummary{}, errors.New("anchor tile outside the world")
 		}
+		s.absorbInto(*spec.X, *spec.Y, 0, 0)
 		if !w.walkableAt(*spec.X, *spec.Y) {
 			return ObjectSummary{}, errors.New("anchor tile is not walkable")
 		}

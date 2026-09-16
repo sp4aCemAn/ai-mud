@@ -382,3 +382,59 @@ Integration runs:
 - `x/crypto` ≥0.35 for `NoClientAuthCallback`/`PartialSuccessError`
   (module is on v0.53; charm ssh v0.0.0-2025… overlays its pub key
   handler AFTER the ServerConfigCallback config — the callback wins).
+
+## Harness slice 1: the AI game master, two-stage (cactus)
+
+- **Game seam** (`internal/game/gm.go`, `frontier.go`, `frontier` hooks):
+  `GMEvent` roundup ring (cap 64) with `gmNote` hooks (login/death/kill/
+  quest/announce/explore); `DrainGMEvents` + `Observe()` (dead-lock pin
+  `TestGMObserveDoesNotDeadlock` — Observe must never double-take
+  playersMu); `Towns()` cards; `GMAnnounce` (200-char rail); Announce
+  now fans out to every player AND notes the ring (the old "global"
+  key reached nobody's event line — latent bug fixed with the seam).
+  `Announce`'s fanout + `world growth` line land per player.
+- **The frontier queue** (`internal/game/frontier.go`): the turn trigger
+  is NOT the clock. Seed-settled boot rect (`seedSettled`, both boot
+  paths), `chunkVisit` fires ONE explore gmEvent per fresh chunk FIRST
+  visit (and non-blocking pokes the 1-buffer `Server.gmWake` door via
+  `Poke()`), `bumpSettled` counts authored entities per chunk (spawn
+  rails), `settleCap=3` (population degree — at cap a chunk is quiet
+  ground), `frontierSpots`/`GMFrontierSpot` (spawn mediation: walkable
+  tiles in unsettled chunks chunk-adjacent to settled ones, growing the
+  plane a chunk EAST when the boot rect covers all its chunks — the
+  neutral test pin `TestFrontierSpotsRidesTheDeck`; enemies live at the
+  dark edge). The cadence ticker is only a heartbeat floor: the queue
+  is frontier-driven, so an idle world never spends LLM budget.
+- **Two-stage loop** (`internal/harness/loop.go`, `actions.go`):
+  STAGE 1 = the PERSONA turn — pure lore, NO tool schema attached (the
+  writer never becomes the interpreter; config `system_prompt` seed,
+  text-protocol suffix only rides in single-stage fallback). STAGE 2 =
+  the INTERPRETER turn — verb card (`configs/gm_tools.json`, OpenAI
+  function-calling format) attached, native `tool_calls` come back
+  (verified live against `cactus serve`: standard wire shape, clean
+  flat arguments, `cloud_handoff:false`). Parse priority: structured
+  tool calls → tolerant JSON fallback (`parseActions` — the single-
+  backend degradation floor, the harness-mock CI contract) → pure
+  prose = deliberate no-op (the engine's `the world holds its breath`
+  never floods players). Rails per cycle: ≤ maxActions, unknown verbs
+  decline at the seam, announce cap; the generations ledger
+  (`harness.RelationalGeneration` adapter) writes one `gm_cycle` row
+  per turn — the debug trail + the parser's regression corpus.
+- **Provider** (`configs/harness.yaml` + compose env): `cactus serve
+  google/gemma-4-E2B-it --no-cloud-handoff --port 1243` on the Mac host
+  (brew formula from cactus-compute/cactus, credited in README);
+  `HARNESS_BASE_URL=http://host.docker.internal:1243/v1` +
+  `HARNESS_MODEL=gemma-4-e2b-it-cq4`. LM Studio :1234 stays the
+  fallback provider (same client). Cloud handoff pinned OFF ( determ-
+  inistic, offline GM; the fallback when the model fumbles is the
+  no-op log, never a cloud call).
+- **Tests**: `internal/harness/loop_test.go` (scripted endpoint: the
+  two-stage probe `TestLoopTwoStageCactus` — prose persona → native
+  tool_calls → applied verb; prose-noise no-op; 7-case parse table),
+  `internal/game/gm_test.go` (roundup ring + cap/overflow, dead-lock
+  pin, towns cards, announce cap, frontier visit/revisit + the poke
+  door, frontier spot mediation past the settled boot rect).
+- **Charted gotchas**: harness logging wants cycle logs (the deployed
+  container logs cycle/announce lines — the deployment's debug trail);
+  the `exploration→turn` ledger lives in `generations.kind=gm_cycle`
+  (the GM turn's audit row; capture table for parser regressions).

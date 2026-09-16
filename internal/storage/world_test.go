@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,20 +24,35 @@ func TestIntegrationWorlds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer rel.Close()
+	// rel.Close() runs inside the t.Cleanup, AFTER the deletes
 
-	// unique names per run (name is UNIQUE across the table)
+	// unique names per run (name is UNIQUE across the table).
+	// CLEANUP TRUTH: the test context dies with the test — cleanups run
+	// on a FRESH background ctx, or the deletes silently fail and leak
+	// rows (a leaked activated test world flips the live world's
+	// is_active flag via the one-active invariant. Ship bug once).
+	// Also: the previously-active running world gets its activation
+	// RESTORED (a storage test must not take down the served game), and
+	// rel.Close() runs INSIDE the cleanup AFTER the deletes (an early
+	// close sealed the pool and made every cleanup query fail silently).
 	unique := fmt.Sprintf("testworld-%d", time.Now().UnixNano())
-	cleanup := func() {
-		cards, _ := rel.ListWorlds(ctx)
+	priorActive, _ := rel.ActiveWorld(ctx)
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(func() {
+		defer cancelCleanup()
+		cards, _ := rel.ListWorlds(cleanupCtx)
 		for _, c := range cards {
-			if c.Name == unique || c.Name == unique+"-b" {
-				_ = rel.DeleteWorld(ctx, c.ID)
+			if strings.Contains(c.Name, "testworld-") || strings.Contains(c.Name, "narrtest-") {
+				_ = rel.DeleteWorld(cleanupCtx, c.ID)
 			}
 		}
-	}
-	cleanup()
-	t.Cleanup(cleanup)
+		// restore whatever was the active world before the test ran
+		// (ActivateWorld's one-active invariant clears everyone)
+		if priorActive.ID != 0 {
+			_ = rel.ActivateWorld(cleanupCtx, priorActive.ID)
+		}
+		rel.Close()
+	})
 
 	// --- create + fetch ---
 	w1 := &World{Name: unique, Seed: 424242, WW: 98, WH: 25, SpawnX: 10, SpawnY: 11}
@@ -248,16 +264,20 @@ func TestIntegrationNarrCommits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer rel.Close()
 
 	// a throwaway world row holds the cascade (narr_revisions deletes
-	// with its world — no cross-test residue)
+	// with its world — no cross-test residue). The delete runs on a
+	// FRESH ctx (the test's ctx may be dead by cleanup time) and the
+	// pool closes AFTER it.
 	var w *World = &World{Name: fmt.Sprintf("narrtest-%d", time.Now().UnixNano()),
 		Seed: 1, WW: 40, WH: 12, IsActive: false}
 	if err := rel.CreateWorld(ctx, w); err != nil {
 		t.Fatalf("create world: %v", err)
 	}
-	t.Cleanup(func() { _ = rel.DeleteWorld(ctx, w.ID) })
+	t.Cleanup(func() {
+		_ = rel.DeleteWorld(context.Background(), w.ID)
+		rel.Close()
+	})
 
 	n := NewNarrCommits(rel, w.ID)
 	key := "narr:town:1:Vex"

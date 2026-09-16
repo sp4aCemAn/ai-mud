@@ -1,0 +1,59 @@
+{
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "announce",
+        "description": "Speak ONE in-fiction line to every player. Use for world mood, omens, weather, alarm, rumor. One short sentence.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "The line itself, plain in-fiction prose, at most 200 characters, no quotation marks around it."
+            }
+          },
+          "required": ["text"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "spawn_enemies",
+        "description": "Raise ONE hostile band at the frontier (the edge of explored land). The game picks the exact tile. Use when the map's edge should feel dangerous.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "description": "Band size, 1 to 4 follows. 2 is a fair cull."
+            },
+            "level": {
+              "type": "integer",
+              "description": "Band strength, 1 to 3. 1 is the safe edge; 3 is trouble."
+            }
+          },
+          "required": ["count", "level"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "raise_village",
+        "description": "Found ONE new settlement exactly at the frontier (the dark edge of the map). It arrives with an innkeeper, a storekeep, and a villager — real, walkable, tradeable.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "The settlement's name, one or two words, at most 32 characters, e.g. \"Slagmoor\" or \"Drover's Rest\"."
+            }
+          },
+          "required": ["name"]
+        }
+      }
+    }
+  ]
+}

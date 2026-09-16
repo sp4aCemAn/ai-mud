@@ -100,10 +100,17 @@ func main() {
 
 	// AI harness — component is skipped (with a warning) when the config
 	// file is missing; it never takes the server down if the LLM is off.
+	// Two-stage (cactus): the persona turn and the interpreter turn ride
+	// one OpenAI-compatible endpoint; the generations ledger records
+	// every GM turn (nil recorder = seed-env/lite modes skip cleanly).
 	if hCfg, err := harness.LoadConfig(harness.ConfigPath()); err != nil {
 		slog.Warn("harness disabled", "err", err)
 	} else {
-		g.Go(func() error { return harness.New(hCfg, gameServer).Run(ctx) })
+		h := harness.New(hCfg, gameServer)
+		if rel, ok := store.Relational.(*storage.Relational); ok {
+			h.AttachLedger(harness.RelationalGeneration{Ref: rel})
+		}
+		g.Go(func() error { return h.Run(ctx) })
 	}
 
 	slog.Info("ai-mud starting")

@@ -18,9 +18,17 @@ type Config struct {
 	// BaseURL of an OpenAI-compatible server, including the /v1 prefix.
 	// Examples (all local):
 	//   http://localhost:11434/v1  (Ollama)
-	//   http://localhost:1234/v1   (LM Studio)
+	//   http://localhost:1234/v1   (LM Studio — the GM persona stage)
 	//   http://localhost:8000/v1   (vLLM)
 	BaseURL string `yaml:"base_url"`
+
+	// InterpreterBaseURL / InterpreterModel: the tool-call stage's own
+	// provider (the person an interpreter are SEPARATE by design — the
+	// persona turns lore; the interpreter turns decisions into tool
+	// calls). Empty = same endpoint/model as the persona (single
+	// backend runs).
+	InterpreterBaseURL string `yaml:"interpreter_base_url"`
+	InterpreterModel   string `yaml:"interpreter_model"`
 
 	// APIKey is sent as a Bearer token. Most local servers ignore it.
 	APIKey string `yaml:"api_key"`
@@ -39,6 +47,17 @@ type Config struct {
 	// (e.g. "45s", "2m"). The default (45s) is intentionally slow — a
 	// quiet world shouldn't burn local LLM budget.
 	Cadence string `yaml:"cadence"`
+
+	// Cooldown is the post-turn quiet window (the poke-storm rail: an
+	// exploring player triggers frontier turns; the shortest interval
+	// between two full model turns). Default "15s" — tuned for dense
+	// world-building expoloration.
+	Cooldown string `yaml:"cooldown"`
+
+	// ToolsPath points at the verb card (OpenAI function-calling JSON;
+	// the interpreter stage's toolset). Empty/missing = the single-stage
+	// legacy loop (text protocol only — the CI mock's degradation path).
+	ToolsPath string `yaml:"tools_path"`
 
 	// SystemPrompt is the seed of the game-master persona. The loop
 	// appends the one-JSON-object tool protocol off this seed.
@@ -65,6 +84,7 @@ func LoadConfig(path string) (Config, error) {
 		Temperature: 0.7,
 		MaxTokens:   512,
 		Cadence:     "45s",
+		ToolsPath:   "configs/gm_tools.json",
 	}
 
 	data, err := os.ReadFile(path)
@@ -81,6 +101,12 @@ func LoadConfig(path string) (Config, error) {
 	if _, err := timeoutDuration(cfg.Timeout); err != nil {
 		return cfg, fmt.Errorf("config %s: %w", path, err)
 	}
+	if v := os.Getenv("HARNESS_COOLDOWN"); v != "" {
+		cfg.Cooldown = v
+	}
+	if _, err := time.ParseDuration(cfg.Cooldown); cfg.Cooldown != "" && err != nil {
+		return cfg, fmt.Errorf("config %s: invalid cooldown %q", path, cfg.Cooldown)
+	}
 
 	// env overrides — lets e.g. Docker aim at a different host without
 	// editing the shared config file (see build/compose.yaml)
@@ -89,6 +115,13 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if v := os.Getenv("HARNESS_MODEL"); v != "" {
 		cfg.Model = v
+	}
+	// the interpreter stage's own provider (empty = same backend)
+	if v := os.Getenv("HARNESS_INTERPRETER_BASE_URL"); v != "" {
+		cfg.InterpreterBaseURL = v
+	}
+	if v := os.Getenv("HARNESS_INTERPRETER_MODEL"); v != "" {
+		cfg.InterpreterModel = v
 	}
 	return cfg, nil
 }
