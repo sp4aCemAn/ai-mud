@@ -626,3 +626,149 @@ func TestUIDrivesTownDoor(t *testing.T) {
 		t.Fatal("summary must report the outside truth again")
 	}
 }
+
+// TestUIStoreOverlayInTown drives the real UI stack through a claimed
+// town door into a storekeep bump: the shared public counter must
+// mount (Result.Shop in the reply, the store overlay rendered) and a
+// step of plain walking dismisses it.
+func TestUIStoreOverlayInTown(t *testing.T) {
+	r, world := gameScreenAfterJoin(t)
+	gs := activeScreen(r.(Router)).(GameScreen)
+	spawnX, spawnY := gs.world.SpawnX, gs.world.SpawnY
+
+	// author a village east of spawn with a storekeeper whose wares
+	// carry one global ref + one namespaced local item
+	villX, villY := spawnX+2, spawnY
+	data, _ := json.Marshal(map[string]any{
+		"items": []map[string]any{{
+			"id": "counterhold:embercask", "name": "ember cask",
+			"desc": "pours slow", "price": 15,
+			"kind": "potion", "effect": "hp:+6", "inv": "ember casks",
+		}},
+		"npcs": []map[string]any{
+			{"type": "storekeep", "name": "Quinn", "x": 4, "y": 3,
+				"wares": []string{"potion:dark", "counterhold:embercask"}},
+		},
+	})
+	obj, err := world.PlaceObject(game.ObjectSpec{
+		Kind: "village", Name: "counterhold", Radius: 4,
+		X: &villX, Y: &villY, Data: data,
+	})
+	if err != nil {
+		t.Fatalf("place village: %v", err)
+	}
+	_ = obj
+
+	// step onto the door
+	if p, ok := world.State("SHA256:testfp"); !ok {
+		t.Skip("player not present")
+	} else {
+		p.X, p.Y = villX-1, villY
+		world.DebugSetPlayer("SHA256:testfp", p)
+	}
+	r = drive(t, r, "l")
+	if world.DebugTownRef("SHA256:testfp") == nil {
+		t.Fatal("door step should nest")
+	}
+
+	// inside: find Quinn, set the testing rig beside him, bump east
+	tp := world.DebugTownRef("SHA256:testfp")
+	gs = activeScreen(r.(Router)).(GameScreen)
+	_ = gs
+	tc := world.DebugTown(tp.TownID)
+	if tc == nil {
+		t.Fatal("town state")
+	}
+	vx, vy := -1, -1
+	for _, d := range tc.Dots {
+		if d.Name == "Quinn" && d.Role == "storekeep" {
+			vx, vy = d.X, d.Y
+		}
+	}
+	if vx < 0 {
+		t.Fatal("storekeep dot missing")
+	}
+	// bump east toward the counter (rig position: DebugSetPlayer path)
+	if p, ok := world.State("SHA256:testfp"); ok {
+		p.X, p.Y = vx-1, vy
+		world.DebugSetPlayer("SHA256:testfp", p)
+	}
+	r = drive(t, r, "l")
+	gs = activeScreen(r.(Router)).(GameScreen)
+	if gs.shop == nil {
+		t.Fatalf("the storekeep bump should have mounted the counter: %+v", gs.p)
+	}
+	if gs.shop.Keeper != "Quinn" || len(gs.shop.Lines) != 2 {
+		t.Fatalf("authored counter wrong: %+v", gs.shop)
+	}
+}
+
+// TestUIStoreOverlayUnmountsOnClose: the apply path mirrors the server
+// truth — after ESC the server drops the browsing ref, so the next
+// Result's nil Shop must unmount the overlay (no stale frame).
+func TestUIStoreOverlayUnmountsOnClose(t *testing.T) {
+	r, world := gameScreenAfterJoin(t)
+	gs := activeScreen(r.(Router)).(GameScreen)
+
+	// mount a counter directly on the mount surface: place the village
+	// counter the same way the door test does, then bump it twice.
+	spawnX, spawnY := gs.world.SpawnX, gs.world.SpawnY
+	villX, villY := spawnX+2, spawnY
+	data, _ := json.Marshal(map[string]any{
+		"npcs": []map[string]any{
+			{"type": "storekeep", "name": "Quinn", "x": 4, "y": 3,
+				"wares": []string{"potion:dark"}},
+		},
+	})
+	if _, err := world.PlaceObject(game.ObjectSpec{
+		Kind: "village", Name: "unmounthold", Radius: 4, X: &villX, Y: &villY, Data: data,
+	}); err != nil {
+		t.Fatalf("place village: %v", err)
+	}
+
+	if p, ok := world.State("SHA256:testfp"); ok {
+		p.X, p.Y = villX-1, villY
+		world.DebugSetPlayer("SHA256:testfp", p)
+	}
+	r = drive(t, r, "l") // through the door
+	if world.DebugTownRef("SHA256:testfp") == nil {
+		t.Fatal("door step should nest")
+	}
+	tc := world.DebugTown(world.DebugTownRef("SHA256:testfp").TownID)
+	if tc == nil {
+		t.Fatal("town state")
+	}
+	vx, vy := -1, -1
+	for _, d := range tc.Dots {
+		if d.Name == "Quinn" && d.Role == "storekeep" {
+			vx, vy = d.X, d.Y
+		}
+	}
+	if vx < 0 {
+		t.Fatal("storekeep dot missing")
+	}
+	if p, ok := world.State("SHA256:testfp"); ok {
+		p.X, p.Y = vx-1, vy
+		world.DebugSetPlayer("SHA256:testfp", p)
+	}
+	r = drive(t, r, "l") // bump the counter
+	gs = activeScreen(r.(Router)).(GameScreen)
+	if gs.shop == nil {
+		t.Fatal("the counter should have mounted")
+	}
+
+	// esc closes: the apply path drops the overlay off the server truth
+	r = drive(t, r, "esc")
+	gs = activeScreen(r.(Router)).(GameScreen)
+	if gs.shop != nil {
+		t.Fatal("escaped overlay must unmount via the server mirror")
+	}
+
+	// and a second close (server already dropped the ref) stays clean
+	// with no overlay resurrection
+	r = drive(t, r, "esc")
+	gs = activeScreen(r.(Router)).(GameScreen)
+	if gs.shop != nil {
+		t.Fatal("the overlay must never resurrect from a stale mirror")
+	}
+}

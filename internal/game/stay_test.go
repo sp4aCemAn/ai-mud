@@ -8,7 +8,7 @@ import (
 )
 
 // TestStaySequenceHeals drives the FULL sleep sequence through the
-// real tick: the 5-coin funsal up front, staged lines one per ~2s,
+// real tick: the 5-coin bill up front, staged lines one per ~2s,
 // then the full HP/mana restore — pinning the sleep pin en route.
 func TestStaySequenceHeals(t *testing.T) {
 	s := NewServerWorld(WorldSpec{Name: "cradlehold", Seed: 20260909, WW: WorldW, WH: WorldH})

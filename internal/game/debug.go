@@ -52,3 +52,11 @@ func (s *Server) DebugTownRef(fp string) *townRef {
 	}
 	return nil
 }
+
+// DebugTown exposes a built TownState (cross-package assertions on the
+// roster grid; gameplay never calls it). Nil before the town builds.
+func (s *Server) DebugTown(townID int64) *TownState {
+	s.playersMu.Lock()
+	defer s.playersMu.Unlock()
+	return s.townOrBuild(townID)
+}

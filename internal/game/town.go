@@ -114,15 +114,25 @@ func buildTown(o storage.WorldObject) *TownState {
 	// {"npcs":[{"type":"innkeep","name":"...","x":n,"y":n,
 	//           "convo":[{"text":"...","quest":{...}}]}]}
 	var payload struct {
-		NPCs []struct {
+		Items []ItemSpec `json:"items"`
+		NPCs  []struct {
 			Type  string     `json:"type"`
 			Name  string     `json:"name"`
 			X     int        `json:"x"`
 			Y     int        `json:"y"`
+			Wares []string   `json:"wares"`
 			Convo []TalkLine `json:"convo"`
 		} `json:"npcs"`
 	}
 	_ = json.Unmarshal(o.Payload, &payload)
+
+	// town-local goods (slice 5): data.items merges into the registry —
+	// the namespace rule makes ids unique (the no-collision check ran
+	// at tool write time)
+	for _, it := range payload.Items {
+		registerLocalItem(it)
+	}
+
 	t.NPCConvo = make(map[string][]TalkLine)
 	for _, npc := range payload.NPCs {
 		name := npc.Name
@@ -133,8 +143,18 @@ func buildTown(o storage.WorldObject) *TownState {
 		if !townWalkable(t, x, y) {
 			x, y = townFreeSpot(t, npc.X, npc.Y)
 		}
-		t.Dots = append(t.Dots, Dot{X: x, Y: y, Kind: "npc_town",
-			Role: npc.Type, Name: name, Count: 1})
+		dot := Dot{X: x, Y: y, Kind: "npc_town",
+			Role: npc.Type, Name: name, Count: 1}
+		// unknown authored refs never land (a GM typo must never
+		// block a town); the counter just shows less
+		for _, ref := range npc.Wares {
+			if !knownItem(ref) {
+				slog.Warn("village wares ref unknown, dropping", "town", t.Name, "ref", ref)
+				continue
+			}
+			dot.Wares = append(dot.Wares, ref)
+		}
+		t.Dots = append(t.Dots, dot)
 		if len(npc.Convo) > 0 {
 			t.NPCConvo[name] = npc.Convo
 		}
@@ -213,13 +233,28 @@ func (s *Server) townOrBuild(townID int64) *TownState {
 
 // registerTown seeds (or refreshes) the villages registry with an
 // authored row — used by the boot replay and by the runtime tool
-// surface, so every village row is equally enterable.
+// surface, so every village row is equally enterable. A refreshed row
+// (tool PATCH) retires its counters too: the store keeper's stale
+// wares never outlive the row (a warm state rebuilds from the fresh
+// row, and the next bump re-opens the fresh counter).
 func (s *Server) registerTown(row storage.WorldObject) {
 	if s.townRows == nil {
 		s.townRows = make(map[int64]storage.WorldObject)
 	}
 	s.townRows[row.ID] = row
 	delete(s.towns, row.ID) // a warm state rebuilds from the fresh row
+	s.dropTownStores(row.ID)
+}
+
+// dropTownStores retires every counter keyed by one town (the stale
+// lines could otherwise outlive the row's authored wares forever).
+func (s *Server) dropTownStores(townID int64) {
+	prefix := fmt.Sprintf("town:%d:", townID)
+	for key := range s.stores {
+		if strings.HasPrefix(key, prefix) {
+			delete(s.stores, key)
+		}
+	}
 }
 
 // paintGate stamps the village's own 町 onto the world grid at the
@@ -267,31 +302,20 @@ func (s *Server) enterTown(p *Player, townID int64) {
 
 // --- slice 3: talk + narration ------------------------------------------------
 
-// NarrStore is the narration-document layer (the harness's authored
-// talk lines in the docdb). Wired generically so any backend (and the
-// defer Loaded nil path) fits; *storage.Document satisfies it with a
-// small adapter — PutNarrDoc/NarrDocByKey live on *Document.
+// NarrStore is the narration-commit seam (the GM's talk lines; slice 5
+// backs it with append-only relational revisions — *storage.NarrCommits).
+// Wired generically so any backend (and the memory-mode nil path) fits.
 type NarrStore interface {
 	PutNarrDoc(ctx context.Context, key string, v any) error
 	NarrDocByKey(ctx context.Context, key string, v any) error
 }
 
-// DocumentNarrStore adapts the *storage.Document into NarrStore
-// (interface-conformance sugar: the methods exist with the same
-// shapes, so this keeps a single point of truth for the wiring).
-func AttachDocumentNarr(s *Server, d interface {
-	PutNarrDoc(ctx context.Context, key string, v any) error
-	NarrDocByKey(ctx context.Context, key string, v any) error
-}) {
-	s.AttachNarrStore(d)
-}
-
 // AttachNarrStore wires the conversation read path; nil = the payload
-// and canned pool only (the docdb layer is optional).
+// and canned pool only (the commit chain is optional).
 func (s *Server) AttachNarrStore(store NarrStore) {
 	s.narr = store
 	if s.narr != nil {
-		slog.Info("narration store attached (docdb conversations live)")
+		slog.Info("narration commit store attached (revisions replay from the world record)")
 	}
 }
 
@@ -321,7 +345,7 @@ type Talk struct {
 	Line     int        `json:"-"`
 }
 
-// narrKey is the docdb namespace: narr:<world>:<town>:<npc>.
+// narrKey is the narration-commit namespace: narr:<world>:<town>:<npc>.
 func narrKey(worldID, townID int64, npc string) string {
 	return fmt.Sprintf("narr:%d:%d:%s", worldID, townID, npc)
 }
@@ -345,12 +369,21 @@ func (s *Server) inTownInteract(p *Player, dx, dy int) *Player {
 		return p
 	}
 	// NPC bump = the role decides (slice 4: the innkeep offers a bed
-	// standing — the coin waits for the accept; everyone else talks)
+	// standing — the coin waits for the accept; slice 5: a loaded
+	// storekeep opens the public counter — the dot IS the broker;
+	// everyone else talks)
 	for i := range t.Dots {
 		if t.Dots[i].X == nx && t.Dots[i].Y == ny {
-			if t.Dots[i].Role == "innkeep" {
+			role, dot := t.Dots[i].Role, t.Dots[i]
+			switch {
+			case role == "innkeep":
 				s.offerStay(p, t, i)
-			} else {
+			case role == "storekeep" && len(dot.Wares) > 0:
+				sh := s.tshopFor(t, i)
+				s.openStore(p, townStoreKey(t.ID, dot.Name), sh)
+				w.setEvent(p.Fingerprint, fmt.Sprintf("%s hails you — [1..%d] to trade",
+					dot.Name, len(sh.Lines)))
+			default:
 				s.openTalk(p, t, i)
 			}
 			return p
@@ -362,12 +395,37 @@ func (s *Server) inTownInteract(p *Player, dx, dy int) *Player {
 	}
 	p.X, p.Y = nx, ny
 	p.lastSeen = time.Now()
-	// a step leaves the innkeeper's standing menu behind
+	// a step leaves the innkeeper's standing menu and any counter
+	// browse behind
 	delete(s.stayOffers, p.Fingerprint)
+	delete(s.storeOf, p.Fingerprint)
 	return p
 }
 
-// townOccupiedByPlayer finds another co-present player on a town tile.
+// registerLocalItem merges one town-scoped ItemSpec into the registry
+// (no-collision: tool-time validation enforced the "<town>:" prefix;
+// we still guard here so boot replay of an older row can't shadow).
+func registerLocalItem(it ItemSpec) {
+	if catalog == nil {
+		initCatalog()
+	}
+	if _, exists := catalog[it.ID]; exists {
+		return // never shadow a known item (global takes precedence)
+	}
+	catalog[it.ID] = it
+}
+
+// tshopFor materializes the counter for one storekeep dot — the dot
+// IS the broker: wares are the refs the dot carries.
+func (s *Server) tshopFor(t *TownState, i int) *Store {
+	dot := t.Dots[i]
+	return &Store{
+		Keeper: dot.Name,
+		Town:   t.Name,
+		Pitch:  fmt.Sprintf("%s runs the counter — \"no credit, outlander.\"", dot.Name),
+		Lines:  shopLinesFrom(dot.Wares),
+	}
+}
 func (s *Server) townOccupiedByPlayer(t *TownState, fp string, x, y int) string {
 	for id, other := range s.players {
 		if id == fp || other.townRef == nil || other.townRef.TownID != t.ID {

@@ -121,13 +121,16 @@ func deleteDoc(ctx context.Context, qx docWriter, key string) error {
 	return nil
 }
 
-// --- narration documents (the AI harness's authored talk layer) -------------
+// --- narration documents (legacy docdb talks; lone callers remain) ----------
 //
-// Layout inside the jsonb-documents table:
+// Slice 5 moved game narration to APPEND-ONLY COMMITS in the
+// relational side (narr_revisions — see world.go NarrCommits). The
+// docdb narration upserts stay only as the legacy seam for non-game
+// narration documents; new game code must prefer the commit chain.
 //
 //	narr:... → {"lines":[{"text":...,"quest":{...}},...]}
 //
-// Keys are caller-owned; the game builds narr:<town>:<npc>.
+// Keys are caller-owned.
 
 // PutNarrDoc upserts one narration document by explicit key.
 func (d *Document) PutNarrDoc(ctx context.Context, key string, v any) error {

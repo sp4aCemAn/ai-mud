@@ -414,3 +414,88 @@ func isUniqueViolation(err error) bool {
 	// error type without importing errors everywhere:
 	return err != nil && strings.Contains(err.Error(), "duplicate key value")
 }
+
+// --- narration commits (slice 5: lore edits build on each other) ------------
+//
+// Narrative edits are COMMITS, not hot overwrites: each edit inserts
+// revision `tip+1` over the current tip of its key. Reads return the
+// TIP. Boot never trusts the hot layer — the village row's authored
+// convo seeds revision 1 (rev base NULL), and every later edit extends
+// the chain. Restart replays the chain in-order; nothing "goes hot".
+
+// NarrCommits is the NarrStore adapter over the relational narration
+// commit chain (*storage.Document satisfies nothing here — lore lives
+// in the schema'd side so revisions replay from the world record).
+type NarrCommits struct {
+	r       *Relational
+	worldID int64
+}
+
+// NewNarrCommits binds the commit adapter to one world's rows.
+func NewNarrCommits(r *Relational, worldID int64) *NarrCommits {
+	return &NarrCommits{r: r, worldID: worldID}
+}
+
+func (n *NarrCommits) avail() error {
+	if n == nil || n.r == nil {
+		return ErrNotAvailable
+	}
+	return n.r.avail()
+}
+
+// tipRev reads the highest revision for a key (0 = nothing committed).
+func (n *NarrCommits) tipRev(ctx context.Context, key string) (int, error) {
+	var rev int
+	err := n.r.pool.QueryRow(ctx,
+		`SELECT COALESCE(MAX(rev), 0) FROM narr_revisions WHERE world_id = $1 AND key = $2`,
+		n.worldID, key).Scan(&rev)
+	if err != nil {
+		return 0, fmt.Errorf("storage: narr tip: %w", err)
+	}
+	return rev, nil
+}
+
+// PutNarrDoc commits ONE revision: rev = tip+1, base_rev = the tip
+// the author saw (the commit chain, append-only). Never overwrites.
+func (n *NarrCommits) PutNarrDoc(ctx context.Context, key string, v any) error {
+	if err := n.avail(); err != nil {
+		return err
+	}
+	tip, err := n.tipRev(ctx, key)
+	if err != nil {
+		return err
+	}
+	raw, err := marshalDoc(v)
+	if err != nil {
+		return err
+	}
+	if _, err := n.r.pool.Exec(ctx,
+		`INSERT INTO narr_revisions (world_id, key, rev, base_rev, payload, author)
+		 VALUES ($1, $2, $3, $4, $5, 'harness')`,
+		n.worldID, key, tip+1, tip, raw,
+	); err != nil {
+		return fmt.Errorf("storage: narr commit: %w", err)
+	}
+	return nil
+}
+
+// NarrDocByKey reads the tip revision's payload for a key.
+// ErrNotFound when the key has no commits yet.
+func (n *NarrCommits) NarrDocByKey(ctx context.Context, key string, v any) error {
+	if err := n.avail(); err != nil {
+		return err
+	}
+	var raw string
+	err := n.r.pool.QueryRow(ctx,
+		`SELECT payload FROM narr_revisions
+		 WHERE world_id = $1 AND key = $2
+		 ORDER BY rev DESC LIMIT 1`,
+		n.worldID, key).Scan(&raw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("storage: narr tip read: %w", err)
+	}
+	return decodeDoc(raw, v)
+}

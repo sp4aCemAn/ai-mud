@@ -253,11 +253,79 @@ wipe; nothing product depends on it.
   bump dispatch: innkeep opens the standing menu not the talk; accept
   charges; decline never spends; a step dismisses the menu).
 
+## Slice 5: the item registry + the town store (`internal/game/item.go`, `store.go`)
+
+- **Item registry** (`item.go`): one `ItemSpec` shape (`id/name/desc/price/kind/effect/inv`),
+  a **global list** (`globalItems` — the four wander-cart goods, ids like
+  `potion:dark`), plus **town-local items** merged from the village row's
+  `data.items`. The namespace rule is **no-collision**: local ids MUST
+  be `<town>:<thing>`; a wrong prefix is rejected at tool time
+  (`validateVillageData`, wired into `PlaceObject` + `UpdateObject` —
+  a 400-equivalent error), so nothing ever shadows. `buildTown` merges
+  local specs into the catalog and drops unknown refs with a WARN
+  (a GM typo never blocks a town).
+- **Unified public stores** (`store.go`): ONE `Store` type + ONE shared
+  buy path (`buyFrom` → registry-resolved specs, the old `switch` index
+  buy retired). The boolean per-player `w.shops` flag is retired —
+  `Server.stores map[key]*Store` is keyed by the **store** (public area:
+  many players browse the same counter concurrently; buys stay
+  per-fingerprint) and `Server.storeOf[fp]` holds each player's one
+  browsing ref. The world merchant taps the global list; the town
+  storekeep bumps through `inTownInteract`'s role dispatch
+  (innkeep → stay · loaded storekeep → counter · everyone else · talk).
+  Stores are lazy-built once per counter; clearing = esc (`close`) or
+  any step leaving the counter tile (same rule as the standing stay
+  offer).
+- Dot-broker: the storekeep **Dot carries `Wares []string`** — the dot
+  IS the broker; buildTown lifts the row refs onto it and the open
+  counters materialize from the touched dot (`tshopFor`).
+- **Narration commits** (`internal/storage/world.go` `NarrCommits`):
+  lore edits are APPEND-ONLY revisions in the relational
+  `narr_revisions` table (`rev = tip+1`, `base_rev` links the chain;
+  tip read returns the newest payload; nothing overwrites). The village
+  row's authored `convo` seeds revision 1 on first talk (`seedNarr`),
+  every later harness commit builds on top; restart replays the chain
+  from the world record (nothing "goes hot"). main.go wires
+  `storage.NewNarrCommits(store.Relational, w.ID)` — the docdb table
+  stays free (accounts only).
+- Tests: `tstore_test.go` (authored wares counter + local-item
+  resolution, empty-counter falls to talk, two players browse the same
+  public counter while buys stay per-fingerprint, namespace rejection
+  at tool time); `world_test.go` purchase suite rides the refactor
+  unchanged; storage `TestIntegrationNarrCommits` (real DB: tip read,
+  chain ordering, base_rev link, world-cascade) — gated
+  `STORAGE_INTEGRATION=1`; ui `TestUIStoreOverlayInTown` (the full pane
+  stack, door oracle pattern: place village → door step → storekeep
+  bump → the mounted overlay with global + local lines).
+- Registered smokes: `town_store_authored_counter` (row surface:
+  place village with `items`/`wares` and read it back) +
+  `town_store_namespace_rejected` (unprefixed local item → 400).
+  NOTE: the buy itself is SSH/UI-only — the HTTP surface has no play
+  path; authoring/readback is what the deployed contract checks.
+- **Polish pass (slice 5.5) gotchas charted**: a tool PATCH to a
+  village row RETIRES its `town:*` counters (`registerTown` →
+  `dropTownStores`;.RemoveObject sweeps too) — the stale counter never
+  outlives the row. Death (`respawn`) clears the browsing ref and any
+  standing stay offer. The pack's potion order is DERIVED from the
+  registry (`PackPotions` — no hidden shadow list). Gear with an
+  unresolvable effect is refused with the vendor voice and the coin
+  returned (`tstore_test` pins — no silent no-op buys). The UI's
+  shop mirror hardens: a Result with a nil Shop unmounts the overlay
+  (`TestUIStoreOverlayUnmountsOnClose` — esc + no stale resurrection).
+- **Door-squatting rule (bug hot-fixed)**: an enemy dot on a
+  town-claimed 町 composites OVER the gate glyph — the door renders as
+  the enemy `'x'` while its tile data stays honest 町 (stepping still
+  enters, the map lies). Tool-time reject now: a hostile anchor on any
+  claimed gate is a 400 (`PlaceObject` checks `tileAt == tileGate &&
+  townAt != 0`); boot replay projects pre-dating rows off
+  (`persist.go` enemy pass). Smokes: `door_tile_rejects_hostile_anchor`
+  + in-package `TestDoorTileRejectsHostileAnchor`.
+
 ## Stored API-level smokes: `tests/smokes/`
 
 | File | What it drives |
 |---|---|
-| `suite_test.go` | `TestSmokeSuite` — registered scenarios against the tool-call surface of the HTTP API (`/api/world/*`): world summary sanity, tool-spawn a hostile group and read it back (name/count/level + bounds), announce, despawn round-trip; Part 3 authored placements: place readback (`place_object_readback`), terrain `POST /terrain` glyph rows + bad-payload 400 (`terrain_edit_applies`), `PATCH` update (`patch_update_replays`), `DELETE` remove + idempotent second removal (`remove_object_roundtrip`). |
+| `suite_test.go` | `TestSmokeSuite` — registered scenarios against the tool-call surface of the HTTP API (`/api/world/*`): world summary sanity, tool-spawn a hostile group and read it back (name/count/level + bounds), announce, despawn round-trip; Part 3 authored placements: place readback (`place_object_readback`), terrain `POST /terrain` glyph rows + bad-payload 400 (`terrain_edit_applies`), `PATCH` update (`patch_update_replays`), `DELETE` remove + idempotent second removal (`remove_object_roundtrip`); Slice 5: `town_store_authored_counter`, `town_store_namespace_rejected` (row-authoring surface only — the buy is SSH/UI-only). |
 | `smoketest/` (framework) | `Env` client: targets a live deployed server when `GAME_SMOKE_URL` is set (contract mode — smoke what's deployed), otherwise spins an in-process standalone stack (game + httpapi, memory accounts). `GAME_SMOKE_LIVE_ONLY=1` forbids the standalone path. This is the home of future *stored* smokes — whenever a feature lands, register a smoke here rather than writing another ad-hoc expect script. SSH-level smokes stay in `tests/smoke/*.exp`. |
 
 Run it:
@@ -273,6 +341,7 @@ Run it:
 | `internal/game/persist_test.go` | game | Part 2 loader: authored content replay (enemy stats, merchant dot from a hostile-terrain anchor, summary agreement), resize replay round-trips |
 | `internal/game/tools_test.go` | game | Part 3 verbs against a fake store: place+apply with row write-through, first-friendly-takes-dot, terrain edit + post-resize glyph replay, update/remove round-trip (no double-free on re-run), bad-spec rejections (unknown kind, no name, out-of-bounds/water anchor), seed-flow stays memory-only with negative ephemeral ids |
 | `internal/game/world_test.go` | game | terrain generation: main-region reachability over 30 seeds (the no-dead-ends guarantee), water blocking + events, fight lifecycle (bump→fight→kill→loot), death→respawn with purse split, store purchase + close, tick regen |
+| `internal/game/tstore_test.go` | game | Slice 5: authored wares counter (global + namespaced local refs resolved on the bumped dot), empty counter falls to the talk pool, public-counter concurrency (two players browse one counter; buys stay per-fingerprint), tool-time namespace rejection |
 | `internal/auth/auth_test.go` | auth | templated Provider seam (lookup/create/idempotency), fingerprint derivation, JSON stop-gap store (atomic file writes, key lookup) |
 | `internal/auth/accounts_test.go` | auth | memory-mode accounts: auto-account minting, password check, credential conflicts; **`TestLoginStealsKeyBoundToAnotherAccount`** — password login from a device whose fp is bound elsewhere moves the binding (old account stripped, index re-pointed) |
 | `internal/storage/storage_test.go` | storage | integration vs real containers (gate `STORAGE_INTEGRATION=1`): generations table round-trip, account CRUD incl. credential conflicts + rename reindexing, same-owner re-attach idempotency, the fp-steal (old account stripped, index re-pointed), unverified reaper list |

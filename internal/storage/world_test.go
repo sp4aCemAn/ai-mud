@@ -231,3 +231,87 @@ func stateHP(t *testing.T, raw json.RawMessage) float64 {
 	n, _ := m["hp"].(float64)
 	return n
 }
+
+// TestIntegrationNarrCommits pins the slice-5 narration commit chain:
+// edits build on each other (rev = tip+1), the tip read returns the
+// highest revision, and nothing ever overwrites (a second write is a
+// NEW revision, not an upsert).
+//
+//	STORAGE_INTEGRATION=1 go test ./internal/storage -v -run TestIntegrationNarrCommits
+func TestIntegrationNarrCommits(t *testing.T) {
+	integrationEnabled(t)
+	cfg := testCfg()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	rel, err := connectPostgres(ctx, cfg.PostgresDSN, cfg)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer rel.Close()
+
+	// a throwaway world row holds the cascade (narr_revisions deletes
+	// with its world — no cross-test residue)
+	var w *World = &World{Name: fmt.Sprintf("narrtest-%d", time.Now().UnixNano()),
+		Seed: 1, WW: 40, WH: 12, IsActive: false}
+	if err := rel.CreateWorld(ctx, w); err != nil {
+		t.Fatalf("create world: %v", err)
+	}
+	t.Cleanup(func() { _ = rel.DeleteWorld(ctx, w.ID) })
+
+	n := NewNarrCommits(rel, w.ID)
+	key := "narr:town:1:Vex"
+
+	// 1: an empty key reads ErrNotFound
+	var doc struct {
+		Lines []struct{ Text string }
+	}
+	if err := n.NarrDocByKey(ctx, key, &doc); err != ErrNotFound {
+		t.Fatalf("an uncommitted key should be ErrNotFound, got %v", err)
+	}
+
+	// 2: three commits — read returns the tip, not the seed
+	for i, text := range []string{"seed line", "edit one", "edit two"} {
+		v := struct {
+			Lines []struct{ Text string }
+		}{Lines: []struct{ Text string }{{Text: text}}}
+		if err := n.PutNarrDoc(ctx, key, &v); err != nil {
+			t.Fatalf("commit %d: %v", i+1, err)
+		}
+	}
+	if err := n.NarrDocByKey(ctx, key, &doc); err != nil {
+		t.Fatalf("tip read: %v", err)
+	}
+	if len(doc.Lines) != 1 || doc.Lines[0].Text != "edit two" {
+		t.Fatalf("the tip must be the newest edit, got %+v", doc.Lines)
+	}
+
+	// 3: the chain is append-only and ordered
+	var seen int
+	rows, qerr := rel.pool.Query(ctx,
+		`SELECT rev, COALESCE(base_rev, -1), payload->'lines' FROM narr_revisions
+		 WHERE world_id = $1 AND key = $2 ORDER BY rev`, w.ID, key)
+	if qerr != nil {
+		t.Fatalf("chain scan: %v", qerr)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var rev, base int
+		var lines json.RawMessage
+		if err := rows.Scan(&rev, &base, &lines); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		seen++
+		if rev != seen {
+			t.Fatalf("revision numbering broke: rev %d after %d scans", rev, seen)
+		}
+		if base != rev-1 {
+			t.Fatalf("base_rev must point at the prior tip: rev %d base %d", rev, base)
+		}
+	}
+	if seen != 3 {
+		t.Fatalf("expected 3 committed revisions, got %d", seen)
+	}
+	// 4: deleting the world cascades the lore chain away (t.Cleanup did it
+	// — alive here: the rows survived until cleanup ran)
+}

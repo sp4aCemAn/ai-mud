@@ -64,7 +64,8 @@ type Server struct {
 	// talks: per-fingerprint open conversation sessions (slice 3)
 	talks map[string]*Talk
 
-	// narr: the docdb conversation layer (nil = payload + canned only)
+	// narr: the narration commit store (slice 5: relational revisions;
+	// nil = payload + canned only)
 	narr NarrStore
 
 	// stays: per-fingerprint sleep sequences (slice 4)
@@ -72,6 +73,12 @@ type Server struct {
 	// stayOffers: per-fingerprint standing menus — the innkeep's
 	// offer before the coin changes hands (slice 4)
 	stayOffers map[string]*Stay
+
+	// stores (slice 5): PUBLIC counters keyed by the store, players
+	// hold one browsing ref at a time. Many players may browse the
+	// same counter concurrently; buys stay per-player.
+	stores  map[string]*Store
+	storeOf map[string]string
 }
 
 func NewServer() *Server {

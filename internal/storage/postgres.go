@@ -102,6 +102,20 @@ func (r *Relational) migrate(ctx context.Context) error {
 			meta       JSONB NOT NULL DEFAULT '{}',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 		);
+
+		CREATE TABLE IF NOT EXISTS narr_revisions (
+			id         BIGSERIAL PRIMARY KEY,
+			world_id   BIGINT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+			key        TEXT NOT NULL,
+			rev        INT NOT NULL,
+			base_rev   INT,
+			payload    JSONB NOT NULL,
+			author     TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			UNIQUE (world_id, key, rev)
+		);
+		CREATE INDEX IF NOT EXISTS idx_narr_world_key
+			ON narr_revisions (world_id, key, rev DESC);
 	`)
 	if err != nil {
 		return fmt.Errorf("storage: postgres migrate: %w", err)

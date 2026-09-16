@@ -9,9 +9,10 @@ import (
 
 // Slice 3: NPC conversations. Bumping a town NPC opens a talk session
 // (the same shared-Result machinery as fights and shops). Lines load:
-// docdb narration (the harness's authored hot layer) → the village
-// row's payload → the canned pool. A convo's final line may carry a
-// quest spec; the grant lands when the talk closes.
+// the narration commit chain (slice 5: relational revisions, tip
+// read) → the village row's payload → the canned pool. A convo's
+// final line may carry a quest spec; the grant lands when the talk
+// closes.
 
 // (NarrStore + TalkLine + QuestSpec + Talk live in town.go next to the
 // narration key namespace.)
@@ -44,8 +45,8 @@ func cannedConvo(role, npc, town string) []TalkLine {
 	return lines
 }
 
-// openTalk materializes the NPC's conversation: docdb narration →
-// the authored row payload → the canned pool.
+// openTalk materializes the NPC's conversation: the narration commit
+// tip → the authored row payload → the canned pool.
 func (s *Server) openTalk(p *Player, t *TownState, i int) {
 	npc := t.Dots[i]
 	role := npc.Role
@@ -54,7 +55,7 @@ func (s *Server) openTalk(p *Player, t *TownState, i int) {
 	}
 	var lines []TalkLine
 
-	// 1: docdb (the harness's authored lines, override-able hot)
+	// 1: the narration commit chain (the GM's newest committed edit)
 	sk := narrKey(s.worldID(), t.ID, npc.Name)
 	if s.narr != nil {
 		var doc struct {
@@ -67,6 +68,12 @@ func (s *Server) openTalk(p *Player, t *TownState, i int) {
 	// 2: the authored row payload's npc convo entries
 	if len(lines) == 0 {
 		lines = t.talkLines(i)
+		// the commit chain seeds here: an authored convo with no
+		// commits yet becomes revision 1, and every later harness edit
+		// builds on top (restart replays the chain, nothing goes hot)
+		if len(lines) > 0 && s.narr != nil {
+			s.seedNarr(sk, lines)
+		}
 	}
 	// 3: the canned pool
 	if len(lines) == 0 {
@@ -82,6 +89,23 @@ func (s *Server) openTalk(p *Player, t *TownState, i int) {
 	}
 	w := s.state
 	w.setEvent(p.Fingerprint, fmt.Sprintf("%s looks at you — [enter] to listen", npc.Name))
+}
+
+// seedNarr commits revision 1 from an authored convo (best-effort:
+// a committed ply is only a seed; the fallback chain already has the
+// row's payload so failure changes nothing live).
+func (s *Server) seedNarr(key string, lines []TalkLine) {
+	ctx, done := context.WithTimeout(context.Background(), 2*time.Second)
+	defer done()
+	var doc struct {
+		Lines []TalkLine `json:"lines"`
+	}
+	doc.Lines = lines
+	if err := s.narr.PutNarrDoc(ctx, key, &doc); err != nil {
+		slog.Warn("narration seed commit failed", "key", key, "err", err)
+	} else {
+		slog.Info("narration seeded (revision 1)", "key", key)
+	}
 }
 
 // advanceTalk: enter advances the shown line; once the convo runs dry
@@ -181,5 +205,3 @@ type Quest struct {
 	Coins     int
 	XP        int
 }
-
-var _ = time.Now

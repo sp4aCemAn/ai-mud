@@ -72,8 +72,11 @@ func main() {
 				Objects: objs,
 			})
 			gameServer.AttachWorldStore(store.Relational, w.ID)
-			if doc, ok := store.Document.(*storage.Document); ok {
-				gameServer.AttachNarrStore(doc)
+			// the narration commit chain: lore edits build on each
+			// other in the relational side (revisions replay from the
+			// world record; the docdb documents table stays free)
+			if rel, ok := store.Relational.(*storage.Relational); ok {
+				gameServer.AttachNarrStore(storage.NewNarrCommits(rel, w.ID))
 			}
 		}
 	} else if !errors.Is(err, storage.ErrNotFound) {

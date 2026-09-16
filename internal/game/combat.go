@@ -55,7 +55,6 @@ type worldState struct {
 	nextEnemyID int
 	version     uint64              // bumps when the terrain/dot picture changes
 	fights      map[string]*Fight   // fingerprint → open fight
-	shops       map[string]bool     // fingerprint → store open
 	lastEvents  map[string][]string // fingerprint → latest log lines
 	flat        bool                // debug flat mode (all walkable floor; growth too)
 	rnd         *rand.Rand
@@ -339,6 +338,10 @@ func (s *Server) respawn(w *worldState, p *Player) {
 		p.townRef = nil
 		w.setEvent(p.Fingerprint, "you fell inside a town — the dark pulls you to the spawn")
 	}
+	// session hygiene: the death unmind any counter browse and a
+	// standing stay offer (the inn takes nothing for your night)
+	delete(s.storeOf, p.Fingerprint)
+	delete(s.stayOffers, p.Fingerprint)
 }
 
 // checkLevel rolls XP thresholds and hits the player up.

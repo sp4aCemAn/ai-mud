@@ -174,8 +174,8 @@ func (s *Server) Interact(fp string, dx, dy int) Result {
 	if f, open := s.state.fights[fp]; open {
 		r.Fight = fightCopy(f)
 	}
-	if locked, _ := s.openShopLocked(p); locked {
-		r.Shop = shopOpen(p)
+	if sh := s.activeShopFor(p); sh != nil {
+		r.Shop = sh
 	}
 	r.Events = s.state.lastEvents[fp]
 	return r
@@ -221,8 +221,9 @@ func (s *Server) lockedInteract(p *Player, dx, dy int) *Player {
 	}
 	if kind, id := w.occupied(nx, ny); kind != "" {
 		if kind == "npc" {
-			s.openShop(p)
-			w.setEvent(p.Fingerprint, fmt.Sprintf("%s hails you — [1..%d] to trade", merchantName, len(wares)))
+			s.openStore(p, wanderStoreKey, wanderStore())
+			w.setEvent(p.Fingerprint, fmt.Sprintf("%s hails you — [1..%d] to trade",
+				merchantName, len(wanderStore().Lines)))
 			return p
 		}
 		s.openFight(p, id)
@@ -232,8 +233,10 @@ func (s *Server) lockedInteract(p *Player, dx, dy int) *Player {
 
 	p.X, p.Y = nx, ny
 	p.lastSeen = time.Now()
-	// a step leaves the innkeeper's standing menu behind
+	// a step leaves the innkeeper's standing menu and any counter
+	// browse behind
 	delete(s.stayOffers, p.Fingerprint)
+	delete(s.storeOf, p.Fingerprint)
 	return p
 }
 
@@ -256,20 +259,35 @@ func (s *Server) openFight(p *Player, enemyID int) {
 	w.fights[p.Fingerprint] = f
 }
 
-// openShopLocked marks the shop session open for this player.
-func (s *Server) openShop(p *Player) {
-	w := s.state
-	if w.shops == nil {
-		w.shops = map[string]bool{}
+// openStore mounts a store session: the Store object is the SHARED
+// counter (keyed by the store, not the player — public areas), the
+// player holds one browsing ref at a time. Bumping an already-open
+// counter re-browses it; another counter swaps your ref.
+func (s *Server) openStore(p *Player, key string, sh *Store) {
+	if s.stores == nil {
+		s.stores = make(map[string]*Store)
 	}
-	w.shops[p.Fingerprint] = true
+	if s.storeOf == nil {
+		s.storeOf = make(map[string]string)
+	}
+	if s.stores[key] == nil {
+		s.stores[key] = sh
+	}
+	s.storeOf[p.Fingerprint] = key
 }
 
-func (s *Server) openShopLocked(p *Player) (open bool, _ error) {
-	if s.state.shops != nil {
-		open = s.state.shops[p.Fingerprint]
+// activeShopFor materializes the shop mirror for one player: the
+// shared counter they're browsing, dress their purse into the pitch.
+func (s *Server) activeShopFor(p *Player) *Shop {
+	key, ok := s.storeOf[p.Fingerprint]
+	if !ok {
+		return nil
 	}
-	return open, nil
+	sh := s.stores[key]
+	if sh == nil {
+		return nil
+	}
+	return sh.pitchFor(p)
 }
 
 // Resize implements CombatView: rebuilds the world at the terminal's
@@ -312,8 +330,8 @@ func (s *Server) Command(fp string, cmd string, arg int) Result {
 			if f, open := w.fights[fp]; open {
 				r.Fight = fightCopy(f)
 			}
-			if open, _ := s.openShopLocked(p); open {
-				r.Shop = shopOpen(p)
+			if sh := s.activeShopFor(p); sh != nil {
+				r.Shop = sh
 			}
 			if talk := s.talks[fp]; talk != nil {
 				r.Talk = talk
@@ -326,12 +344,16 @@ func (s *Server) Command(fp string, cmd string, arg int) Result {
 		}
 		events, _ = s.runFight(fp, cmd, w, p)
 	case "buy":
-		events = buy(w, p, arg)
+		events = s.buyFromRef(w, p, arg)
 	case "use":
 		events = useItem(p, arg)
 	case "close":
-		delete(w.shops, fp)
-		events = []string{fmt.Sprintf("%s nods at the dark road behind you", merchantName)}
+		if key, ok := s.storeOf[fp]; ok {
+			if sh := s.stores[key]; sh != nil {
+				w.setEvent(fp, fmt.Sprintf("%s nods at the dark road behind you", sh.Keeper))
+			}
+		}
+		delete(s.storeOf, fp)
 	}
 
 	r := Result{
@@ -341,8 +363,8 @@ func (s *Server) Command(fp string, cmd string, arg int) Result {
 	if f, open := w.fights[fp]; open {
 		r.Fight = fightCopy(f)
 	}
-	if open, _ := s.openShopLocked(p); open {
-		r.Shop = shopOpen(p)
+	if sh := s.activeShopFor(p); sh != nil {
+		r.Shop = sh
 	}
 	if talk := s.talks[fp]; talk != nil {
 		r.Talk = talk
@@ -355,25 +377,19 @@ func (s *Server) Command(fp string, cmd string, arg int) Result {
 	return r
 }
 
-// useItem applies pack items: arg 1 = dark potion, arg 2 = draught.
-func useItem(p *Player, arg int) []string {
-	switch arg {
-	case 1:
-		if p.Inventory["dark potions"] < 1 {
-			return []string{"no dark potions in the pack"}
-		}
-		p.Inventory["dark potions"]--
-		p.HP = min(p.HP+8, p.MaxHP)
-		return []string{"the potion is bitter — wounds close (hp restored)"}
-	case 2:
-		if p.Inventory["mana draughts"] < 1 {
-			return []string{"no mana draughts in the pack"}
-		}
-		p.Inventory["mana draughts"]--
-		p.Mana = min(p.Mana+4, p.MaxMana)
-		return []string{"the draught blurs the air — mana flows back"}
+// buyFromRef buys from the counter the player is browsing; a stray
+// buy with no mounted store browses the wander cart (the world's
+// always-open peddler contract stays).
+func (s *Server) buyFromRef(w *worldState, p *Player, arg int) []string {
+	key, ok := s.storeOf[p.Fingerprint]
+	if !ok {
+		return wanderStore().buyFrom(w, p, arg)
 	}
-	return []string{"nothing like that in the pack"}
+	sh := s.stores[key]
+	if sh == nil {
+		return []string{"the counter folded away while you browsed."}
+	}
+	return sh.buyFrom(w, p, arg)
 }
 
 // reapStale drops players that haven't been heard from recently. Called
@@ -386,7 +402,7 @@ func (s *Server) reapStale(now time.Time) {
 			slog.Info("reaping stale player", "fingerprint", fp, "name", p.Name)
 			delete(s.players, fp)
 			delete(s.state.fights, fp)
-			delete(s.state.shops, fp)
+			delete(s.storeOf, fp)
 		}
 	}
 }

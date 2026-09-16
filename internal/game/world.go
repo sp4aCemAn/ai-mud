@@ -43,7 +43,8 @@ type Dot struct {
 	Role  string // the town roster's npc type ("innkeep" | "villager" | ...)
 	Count int
 	Name  string
-	ObjID int64 // authored row (tool placements; 0 = autoplay dot)
+	Wares []string // storekeep counters: refs into the item registry
+	ObjID int64    // authored row (tool placements; 0 = autoplay dot)
 }
 
 // dim clamps requested world dims to the play range.

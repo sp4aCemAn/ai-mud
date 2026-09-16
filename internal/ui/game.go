@@ -420,6 +420,9 @@ func (g *GameScreen) apply(r game.Result) {
 	g.p = r.Player
 	g.world = r.World
 	g.fight = r.Fight
+	// the shop mirror: a nil Shop in the reply unmounts the overlay
+	// (esc close, step-away, death) — the overlay never survives a
+	// server truth that already moved on
 	g.shop = r.Shop
 	if r.Talk != nil {
 		g.talk = r.Talk
@@ -807,7 +810,8 @@ func renderFight(f *game.Fight) string {
 	return Panel{Title: "unholy duel", Content: b.String()}.Render()
 }
 
-// renderShop is the store overlay.
+// renderShop is the store overlay (the counter's Town surfaces in the
+// title — One shared Store type, the wander cart just has none).
 func renderShop(s *game.Shop) string {
 	var b strings.Builder
 	b.WriteString(s.Pitch + "\n\n")
@@ -815,10 +819,14 @@ func renderShop(s *game.Shop) string {
 		fmt.Fprintf(&b, "  [%d] %-18s %-22s %dc\n", i+1, w.Name, w.Desc, w.Price)
 	}
 	b.WriteString("\nesc close")
+	if s.Town != "" {
+		return Panel{Title: fmt.Sprintf("%s — %s", s.Town, s.Keeper), Content: b.String()}.Render()
+	}
 	return Panel{Title: s.Keeper, Content: b.String()}.Render()
 }
 
-// renderPack is the pack overlay.
+// renderPack is the pack overlay (the hint's names derive from the
+// item registry — the same order useItem resolves).
 func renderPack(p game.Player) string {
 	var b strings.Builder
 	if len(p.Inventory) == 0 {
@@ -828,7 +836,12 @@ func renderPack(p game.Player) string {
 			fmt.Fprintf(&b, "%-16s x%d\n", name, n)
 		}
 	}
-	fmt.Fprintf(&b, "\nu use dark potion · m sip draught · esc close")
+	pot := game.PackPotions()
+	if len(pot) == 2 {
+		fmt.Fprintf(&b, "\nu use %s · m sip %s · esc close", pot[0].Name, pot[1].Name)
+	} else {
+		b.WriteString("\nesc close")
+	}
 	return Panel{Title: "Pack", Content: b.String()}.Render()
 }
 

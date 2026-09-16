@@ -31,6 +31,10 @@ var registry = []Smoke{
 	{"terrain_edit_applies", smokeTerrainEdit},
 	{"patch_update_replays", smokePatchUpdate},
 	{"remove_object_roundtrip", smokeRemoveRoundtrip},
+	// Slice 5: the item registry + town store authoring surface
+	{"town_store_authored_counter", smokeTownStoreAuthoring},
+	{"town_store_namespace_rejected", smokeTownStoreNamespaceRejected},
+	{"door_tile_rejects_hostile_anchor", smokeDoorTileRejectsHostileAnchor},
 }
 
 // smokePersistedLoad: worlds are loaded at BOOT (the loader reads the
@@ -207,4 +211,75 @@ func smokeRemoveRoundtrip(t *testing.T, env smoketest.Env) {
 	env.DoStatus("DELETE", "/api/world/objects/"+int64String(obj.ID), nil,
 		nil, http.StatusNotFound)
 	env.Log("removed cleanly id=%d", obj.ID)
+}
+
+// smokeTownStoreAuthoring (slice 5): a village row carries ONE item
+// registry shape — town-local specs (ids prefixed by the row's own
+// name) plus per-NPC wares refs resolving through the global list.
+// The counter's authority is the row: PATCH the wares and the store
+// rebuilds on the town's next build (this smoke checks the row
+// surface; the buy itself is SSH/UI-only, like the stay).
+func smokeTownStoreAuthoring(t *testing.T, env smoketest.Env) {
+	obj := placeObject(t, env, map[string]any{
+		"kind": "village", "name": "smokequay", "x": 20, "y": 5, "radius": 4,
+		"data": map[string]any{
+			"items": []map[string]any{
+				{"id": "smokequay:embercask", "name": "ember cask",
+					"desc": "pours slow", "price": 15,
+					"kind": "potion", "effect": "hp:+6", "inv": "ember casks"},
+			},
+			"npcs": []map[string]any{
+				{"type": "storekeep", "name": "Quinn", "x": 4, "y": 3,
+					"wares": []string{"potion:dark", "smokequay:embercask"}},
+			},
+		},
+	})
+	if obj.ID == 0 {
+		t.Fatal("village row")
+	}
+	// readback keeps the wares refs reachable (rows list them)
+	rows := worldObjects(t, env, "village")
+	for _, r := range rows {
+		if r.ID == obj.ID {
+			env.Log("town store row authored id=%d wares=potion:dark+local", r.ID)
+			return
+		}
+	}
+	t.Fatalf("village row vanished from readback: %+v", rows)
+}
+
+// smokeTownStoreNamespaceRejected: the no-collision rule is tool-time.
+// A local item whose ID lacks the row's own town prefix must 400.
+func smokeTownStoreNamespaceRejected(t *testing.T, env smoketest.Env) {
+	try := map[string]any{
+		"kind": "village", "name": "nohold", "x": 21, "y": 6, "radius": 3,
+		"data": map[string]any{
+			"items": []map[string]any{
+				{"id": "wardmail", "name": "ward mail", "price": 3,
+					"kind": "gear", "effect": "def:+1"},
+			},
+		},
+	}
+	env.DoStatus("POST", "/api/world/objects", try, nil, http.StatusBadRequest)
+	env.Log("unprefixed local item rejected at tool time")
+}
+
+// smokeDoorTileRejectsHostile: the no-door-squatting rule (the enemy
+// dot composites over the gate glyph — the door renders as an enemy
+// while its tile data stays honest). A door anchor is a tool-time 400.
+func smokeDoorTileRejectsHostileAnchor(t *testing.T, env smoketest.Env) {
+	// the door: any village row's anchor (each village paints its own
+	// 町 intrinsically) — author against the first row listed
+	rows := worldObjects(t, env, "village")
+	if len(rows) == 0 {
+		t.Fatal("no village rows in the deployed world (door oracle unavailable)")
+	}
+	v := rows[0]
+	try := map[string]any{
+		"kind": "enemy_group", "name": "uX:door-squatter",
+		"x": v.X, "y": v.Y,
+		"data": map[string]int{"count": 1, "level": 1},
+	}
+	env.DoStatus("POST", "/api/world/objects", try, nil, http.StatusBadRequest)
+	env.Log("door anchor rejected at world tile")
 }

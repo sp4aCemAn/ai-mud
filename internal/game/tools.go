@@ -80,6 +80,25 @@ type TileEdit struct {
 	G string `json:"g"`
 }
 
+// validateVillageData enforces the no-collision namespace rule at
+// tool-write time: every data.items entry's ID must be namespaced by
+// the row's own town name ("<town>:<thing>"). Rejected rows never
+// reach buildTown, so nothing can shadow at read time.
+func validateVillageData(name string, payload json.RawMessage) error {
+	var d struct {
+		Items []ItemSpec `json:"items"`
+	}
+	if err := json.Unmarshal(payload, &d); err != nil {
+		return fmt.Errorf("village data is malformed: %w", err)
+	}
+	for _, it := range d.Items {
+		if !isLocalItemID(name, it.ID) {
+			return fmt.Errorf("local item %q must be namespaced as %s:<thing>", it.ID, name)
+		}
+	}
+	return nil
+}
+
 // PlaceObject authors one placement: the world_objects row is written
 // first (the source of truth), then the live world reflects it. Anchor
 // is honored when in-bounds and walkable, otherwise a region spot wins.
@@ -92,6 +111,15 @@ func (s *Server) PlaceObject(spec ObjectSpec) (ObjectSummary, error) {
 	}
 	if spec.Kind == storage.ObjectEdit && len(spec.Tiles) == 0 {
 		return ObjectSummary{}, errors.New("edit needs tiles ({x,y,g} deltas)")
+	}
+	if spec.Kind == storage.ObjectVillage {
+		data := spec.Data
+		if data == nil {
+			data = json.RawMessage(`{}`)
+		}
+		if err := validateVillageData(strings.TrimSpace(spec.Name), data); err != nil {
+			return ObjectSummary{}, err
+		}
 	}
 
 	s.playersMu.Lock()
@@ -109,6 +137,13 @@ func (s *Server) PlaceObject(spec ObjectSpec) (ObjectSummary, error) {
 		}
 		if !w.walkableAt(*spec.X, *spec.Y) {
 			return ObjectSummary{}, errors.New("anchor tile is not walkable")
+		}
+		// a hostile dot must never claim a town's DOOR: the enemy dot
+		// composites over the gate glyph (the door renders as an enemy
+		// while its tile data stays 町 — the walk still enters, but the
+		// map lies). Door-claiming placements are tool-time rejects.
+		if spec.Kind != storage.ObjectVillage && w.tileAt(*spec.X, *spec.Y) == tileGate && s.townAt(*spec.X, *spec.Y) != 0 {
+			return ObjectSummary{}, errors.New("the town door claims that tile — anchor elsewhere")
 		}
 		x, y = *spec.X, *spec.Y
 	}
@@ -179,6 +214,11 @@ func (s *Server) UpdateObject(id int64, patch ObjectPatch) (ObjectSummary, error
 	if patch.Data != nil {
 		row.Payload = *patch.Data
 	}
+	if row.Kind == storage.ObjectVillage && oldRow.Kind == storage.ObjectVillage {
+		if err := validateVillageData(strings.TrimSpace(row.Name), row.Payload); err != nil {
+			return ObjectSummary{}, err
+		}
+	}
 
 	if s.wstore != nil {
 		if err := s.wstore.UpsertObject(context.Background(), &row); err != nil {
@@ -235,6 +275,7 @@ func (s *Server) RemoveObject(id int64) error {
 	if row.Kind == storage.ObjectVillage {
 		delete(s.townRows, row.ID)
 		delete(s.towns, row.ID)
+		s.dropTownStores(row.ID)
 	}
 
 	if s.loaded != nil {

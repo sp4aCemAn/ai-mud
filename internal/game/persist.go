@@ -62,7 +62,6 @@ func spawnWorldBase(s *Server, seed int64, ww, wh int) {
 		region:    nil,
 		enemies:   make(map[int]*Enemy),
 		fights:    make(map[string]*Fight),
-		shops:     make(map[string]bool),
 		rnd:       r,
 		maxGroups: 4,
 	}
@@ -163,6 +162,13 @@ func (s *Server) replayContentReared(base uint64) {
 		x, y := project(w, o)
 		switch o.Kind {
 		case storage.ObjectEnemyGroup:
+			// authored rows predating the door-claiming reject: a
+			// hostile dot on a claimed 町 projects off — the map must
+			// never render an enemy where the town door claims (the
+			// gate glyph stays honest below)
+			if w.tileAt(x, y) == tileGate && s.townAt(x, y) != 0 {
+				x, y = w.pickRegionSpot(w.spawnX, w.spawnY, 3)
+			}
 			count, level := groupStats(o)
 			if e, ok := w.spawnEnemyAt(o.Name, count, level, x, y); ok {
 				e.ObjID = o.ID
