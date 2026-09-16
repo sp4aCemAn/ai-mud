@@ -438,3 +438,55 @@ Integration runs:
   container logs cycle/announce lines — the deployment's debug trail);
   the `exploration→turn` ledger lives in `generations.kind=gm_cycle`
   (the GM turn's audit row; capture table for parser regressions).
+
+## Harness slice 2: builder verbs live (cactus two-stage, frontier queue)
+
+- The GM can now BUILD: verb card v2 (`configs/gm_tools.json`) carries
+  `announce` / `spawn_enemies` (count/level — flat primitive params,
+  the rails pick the exact frontier tile and cap sizes) /
+  `raise_village` (name only — lands with a default roster: innkeep +
+  storekeep + villager, the store wired to the global item registry).
+  Nothing destructive is ever on the card (removal stays admin-only,
+  noted here so nobody "helpfully" wires it). parseToolCalls maps
+  native tool_calls by NAME; unknown verbs decline at the seam.
+- **Provider split is now explicit**: persona = LM Studio :1234
+  (`google/gemma-4-e4b`, lore only, never sees the verb card);
+  interpreter = cactus :1243 (`gemma-4-e2b-it-cq4`, converts the
+  persona's decision into tool_calls). config `interpreter_base_url`/
+  `interpreter_model` + env `HARNESS_INTERPRETER_BASE_URL`/`_MODEL`.
+  The two-stage harness holds both clients (h.iclient for the
+  interpreter; `chat()` routes by stage).
+- **Poke-storm rail**: a deep explorer once triggered a full two-stage
+  turn per FOOTSTEP (3 turns in 1s) — the turn cooldown (config
+  `cooldown`, default 15s) quiets the door between turns; stragglers
+  fold into the ring (nothing is dropped). `turnInFlight` coalesces.
+- **Frontier anti-stacking (the `-32,-32` bug)**: the spot pool is
+  ranked nearest the explorer's edge with a random tie-break, and the
+  SPREAD filter drops anchors within 6 tiles of a live enemy dot —
+  bands appear at DIFFERENT dark-edge tiles (verified live:
+  "Pine Outpost" raised + bands landing at varied coords). `walkableAt`
+  + `absNearServed` gate anchors (negative ABS coords are legal; a
+  galaxy-away anchor must NOT absorb the plane — the 99999,99999 test
+  froze the suite once).
+- **Smoke self-cleaning**: `town_store_authored_counter` removes its
+  own smokequay row at the end (the sweep-by-name ecology previously
+  re-leaked it every run); `door_tile_rejects_hostile_anchor` authors
+  its own door village ANCHORLESS when no village exists in the
+  readback — a pinned water tile on a re-rolled standalone seed 400'd
+  the scenario (the seed lottery), so author-smokes never pin coords.
+- **Storage-integration cleanup truth** (`internal/storage/world_test.go`):
+  test ctx dies with the test — cleanups run on a FRESH context, the
+  pool closes INSIDE the cleanup AFTER the deletes, and the
+  previously-active world's `is_active` is RESTORED (ActivateWorld's
+  one-active invariant otherwise flips the live world off → the
+  container boots the SEED flow and "nothing new appears" — shipped
+  once, twice-rooted here. Boot log `world generated` instead of
+  `persisted world loaded` = the tell).
+- **The GM's self-feedback rule**: announces do NOT note the GM's
+  roundup ring (the announce→event→announce runaway once made the GM
+  narrate to an empty world every beat). Players feel announcements;
+  the GM does not hear its own voice.
+- **Tuning levers** (`configs/harness.yaml` / compose env): cadence
+  (heartbeat floor, 45s), `cooldown` (15s — the dense default),
+  settleCap=3 (the population degree — lower for denser ground),
+  maxActions=3 (rails cap per turn).

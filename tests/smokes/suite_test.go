@@ -220,8 +220,11 @@ func smokeRemoveRoundtrip(t *testing.T, env smoketest.Env) {
 // rebuilds on the town's next build (this smoke checks the row
 // surface; the buy itself is SSH/UI-only, like the stay).
 func smokeTownStoreAuthoring(t *testing.T, env smoketest.Env) {
+	// anchor-less placement: the row records its real walkable coords
+	// (a hard anchor is a seed-lottery — the standalone world re-rolls
+	// per boot and a pinned water tile 400s the scenario)
 	obj := placeObject(t, env, map[string]any{
-		"kind": "village", "name": "smokequay", "x": 20, "y": 5, "radius": 4,
+		"kind": "village", "name": "smokequay", "radius": 4,
 		"data": map[string]any{
 			"items": []map[string]any{
 				{"id": "smokequay:embercask", "name": "ember cask",
@@ -239,13 +242,27 @@ func smokeTownStoreAuthoring(t *testing.T, env smoketest.Env) {
 	}
 	// readback keeps the wares refs reachable (rows list them)
 	rows := worldObjects(t, env, "village")
+	placed := 0
 	for _, r := range rows {
-		if r.ID == obj.ID {
-			env.Log("town store row authored id=%d wares=potion:dark+local", r.ID)
-			return
+		if r.Name == "smokequay" {
+			placed++
 		}
 	}
-	t.Fatalf("village row vanished from readback: %+v", rows)
+	if placed == 0 {
+		t.Fatalf("village row vanished from readback: %+v", rows)
+	}
+	// CLEAN-UP OWN ROWS: every delta run leaks one more smokequay into
+	// the live world otherwise (the sweep-by-name keeps touching the
+	// live world by hand). Remove the row the scenario authored —
+	// a smoke leaves nothing behind.
+	env.Do("DELETE", "/api/world/objects/"+int64String(obj.ID), nil, nil)
+	after := worldObjects(t, env, "village")
+	for _, r := range after {
+		if r.ID == obj.ID {
+			t.Fatalf("the authored row survived its own removal: %+v", r)
+		}
+	}
+	env.Log("town-store row authored and removed")
 }
 
 // smokeTownStoreNamespaceRejected: the no-collision rule is tool-time.
@@ -269,12 +286,21 @@ func smokeTownStoreNamespaceRejected(t *testing.T, env smoketest.Env) {
 // while its tile data stays honest). A door anchor is a tool-time 400.
 func smokeDoorTileRejectsHostileAnchor(t *testing.T, env smoketest.Env) {
 	// the door: any village row's anchor (each village paints its own
-	// 町 intrinsically) — author against the first row listed
+	// 町 intrinsically). Self-sufficient: no village in the readback →
+	// author one (and remove it after — a smoke leaves nothing behind).
 	rows := worldObjects(t, env, "village")
-	if len(rows) == 0 {
-		t.Fatal("no village rows in the deployed world (door oracle unavailable)")
+	var v game.ObjectSummary
+	if len(rows) > 0 {
+		v = rows[0]
+	} else {
+		obj := placeObject(t, env, map[string]any{
+			"kind": "village", "name": "doorgate", "radius": 4,
+		})
+		v = obj
+		defer func() {
+			env.Do("DELETE", "/api/world/objects/"+int64String(obj.ID), nil, nil)
+		}()
 	}
-	v := rows[0]
 	try := map[string]any{
 		"kind": "enemy_group", "name": "uX:door-squatter",
 		"x": v.X, "y": v.Y,

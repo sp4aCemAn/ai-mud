@@ -97,21 +97,36 @@ func (s *Server) frontierSpots(limit int) [][2]int {
 	if len(cand) == 0 {
 		return nil
 	}
+	// SPREAD rule: an anchor near OTHER enemy dots is out of the pool —
+	// the "same spot" stacking pattern (two turns, one tile): bands
+	// meet the wanderer at DIFFERENT dark-edge tiles, not the nearest
+	// rank every time. Truly crowded frontier still earns content.
+	clear := func(p [2]int) bool {
+		for _, e := range w.enemies {
+			if e.HP > 0 && abs(e.X-p[0])+abs(e.Y-p[1]) < 6 {
+				return false
+			}
+		}
+		return true
+	}
+	var spread [][2]int
+	for _, p := range cand {
+		if clear(p) {
+			spread = append(spread, p)
+		}
+	}
+	if len(spread) == 0 {
+		spread = cand
+	}
+	cand = spread
 	// rank by walk distance to the nearest live player (the frontier
-	// the PLAYER sees; a deterministic first-candidate pinned every
-	// turn to the same province corner). Random tie-break keeps
-	// two turns from landing on the same tile.
+	// the PLAYER sees) — spread-but-close beats random-anywhere
 	player, ok := s.playerFrontier()
 	if !ok {
 		player = &Player{X: w.spawnX, Y: w.spawnY}
 	}
 	dist := func(p [2]int) int {
 		return abs(p[0]-player.X) + abs(p[1]-player.Y)
-	}
-	// fisher-yates with the world's own seed → random tie-break
-	for i := len(cand) - 1; i > 0; i-- {
-		j := w.rnd.Intn(i + 1)
-		cand[i], cand[j] = cand[j], cand[i]
 	}
 	insertionSortBy(cand, dist)
 	if len(cand) > limit {
