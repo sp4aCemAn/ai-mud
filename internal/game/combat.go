@@ -56,10 +56,13 @@ type worldState struct {
 	version     uint64              // bumps when the terrain/dot picture changes
 	fights      map[string]*Fight   // fingerprint → open fight
 	lastEvents  map[string][]string // fingerprint → latest log lines
-	flat        bool                // debug flat mode (all walkable floor; growth too)
-	rnd         *rand.Rand
-	maxGroups   int
-	ticks       int
+	// gmEvents: the game master's roundup ring (harness slice 1: the
+	// observer drains it; the oldest note falls off past the cap)
+	gmEvents  []GMEvent
+	flat      bool // debug flat mode (all walkable floor; growth too)
+	rnd       *rand.Rand
+	maxGroups int
+	ticks     int
 }
 
 // changed bumps the render version — call wherever tiles/dots mutate.
@@ -290,6 +293,7 @@ func (s *Server) runFight(fp, action string, w *worldState, p *Player) ([]string
 		res = append(res, events...)
 		p.checkLevel(w.rnd, &events)
 		s.questKill(p, f.Name) // slice 3: bounty progress on the group's name
+		s.gmNote("kill", fmt.Sprintf("%s slew the %s", p.Name, f.Name))
 		enemy.respawnAt = time.Now().Add(60 * time.Second)
 		enemy.HP = 0
 		w.changed()
@@ -307,6 +311,7 @@ func (s *Server) runFight(fp, action string, w *worldState, p *Player) ([]string
 	f.LastFor = f.Name
 	if p.HP <= 0 {
 		events = append(events, fmt.Sprintf("the %s put you in the cold dirt…", f.Name))
+		s.gmNote("death", fmt.Sprintf("%s fell to the %s", p.Name, f.Name))
 		s.respawn(w, p)
 		events = append(events, "…but the dark wakes you by the road, half your coin gone")
 		delete(w.fights, fp)

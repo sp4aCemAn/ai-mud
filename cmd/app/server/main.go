@@ -103,7 +103,7 @@ func main() {
 	if hCfg, err := harness.LoadConfig(harness.ConfigPath()); err != nil {
 		slog.Warn("harness disabled", "err", err)
 	} else {
-		g.Go(func() error { return harness.New(hCfg).Run(ctx) })
+		g.Go(func() error { return harness.New(hCfg, gameServer).Run(ctx) })
 	}
 
 	slog.Info("ai-mud starting")

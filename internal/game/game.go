@@ -120,7 +120,10 @@ func (s *Server) regenWorld(pw, ph int) {
 	s.replayContentReared(versionBefore)
 	s.landSpawnRing()
 	// players keep their positions (the world only grew)
-	s.state.setEvent("global", "the land ripples — reaching farther, never smaller")
+	for fp := range s.players {
+		s.state.setEvent(fp, "the land ripples — reaching farther, never smaller")
+	}
+	s.gmNote("world", "the world grew")
 	slog.Info("world grew", "size", fmt.Sprintf("%dx%d", w.ww, w.wh))
 }
 

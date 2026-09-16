@@ -124,7 +124,10 @@ func (s *Server) Announce(text string) {
 	}
 	s.playersMu.Lock()
 	defer s.playersMu.Unlock()
-	s.state.setEvent("global", text)
+	for fp := range s.players {
+		s.state.setEvent(fp, text)
+	}
+	s.gmNote("announce", text)
 	slog.Info("game master announces", "text", text)
 }
 

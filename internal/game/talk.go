@@ -173,6 +173,7 @@ func (s *Server) questKill(p *Player, enemyName string) {
 			w.setEvent(p.Fingerprint, e)
 		}
 		w.setEvent(p.Fingerprint, fmt.Sprintf("%s COMPLETE — %d coins, %d xp", q.Title, q.Coins, q.XP))
+		s.gmNote("quest", fmt.Sprintf("%s completed %q", p.Name, q.Title))
 		slog.Info("quest completed", "title", q.Title, "fp", p.Fingerprint)
 	}
 }

@@ -35,8 +35,13 @@ type Config struct {
 	Temperature float64 `yaml:"temperature"`
 	MaxTokens   int     `yaml:"max_tokens"`
 
-	// SystemPrompt is the seed of the game-master persona. The harness
-	// loop will use this when prompting the model. TBD — placeholder.
+	// Cadence is how often the game-master loop surveys the world
+	// (e.g. "45s", "2m"). The default (45s) is intentionally slow — a
+	// quiet world shouldn't burn local LLM budget.
+	Cadence string `yaml:"cadence"`
+
+	// SystemPrompt is the seed of the game-master persona. The loop
+	// appends the one-JSON-object tool protocol off this seed.
 	SystemPrompt string `yaml:"system_prompt"`
 }
 
@@ -59,6 +64,7 @@ func LoadConfig(path string) (Config, error) {
 		Timeout:     "30s",
 		Temperature: 0.7,
 		MaxTokens:   512,
+		Cadence:     "45s",
 	}
 
 	data, err := os.ReadFile(path)

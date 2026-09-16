@@ -80,3 +80,15 @@ Every player connection (SSH, web, or the AI acting as game master) will attach 
 Docs:
 - `docs/architecture.md` — components, process model, config conventions
 - `docs/user-loop.md` — the connect → auth → character → world flow, and where the next phases plug in
+
+## Credits & third-party components
+
+- Local game-master inference is served with
+  [Cactus](https://github.com/cactus-compute/cactus)
+  (cactus-compute/cactus), running the gemma-4-E2B model family in the
+  project's own quantized (CQ4) backend as an OpenAI-compatible server.
+  Cactus is MIT-licensed; its gemma/E2B support and OpenAI-compatible
+  `serve` endpoint (incl. native function/tool calling with
+  `--no-cloud-handoff`) make the local, offline GM loop possible.
+  Gemma is provided under the Google/Gemma model license terms by
+  HuggingFace's `google/gemma-*` releases.

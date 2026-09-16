@@ -110,6 +110,7 @@ func (s *Server) Join(fingerprint, name string) Player {
 		lastSeen:    time.Now(),
 	}
 	s.players[fingerprint] = p
+	s.gmNote("login", fmt.Sprintf("%s enters the world", name))
 	slog.Info("player joined", "fingerprint", fingerprint, "name", name)
 	return copyPlayer(p)
 }
