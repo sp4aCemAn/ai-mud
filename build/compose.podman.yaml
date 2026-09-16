@@ -1,0 +1,38 @@
+# Podman compatibility override — layer it on the base compose:
+#
+#   podman-compose -f compose.yaml -f compose.podman.yaml up -d --build gamemaster
+#   (or: `docker compose -f compose.yaml -f compose.podman.yaml ...` —
+#   this file is additive and harmless under docker for testing the merge)
+#
+# WHY an override (the podman deltas, all contained here):
+#
+#   1. host gateway naming: docker machines expose the host loopback to
+#      containers as `host.docker.internal`; podman (v4+ on Linux)
+#      usually maps it as `host.containers.internal`. The game master's
+#      two providers live on the HOST, so both envs re-point here.
+#   2. container binding: rootless podman's bridge maps the host through
+#      the gateway address — the cactus engine must bind 0.0.0.0 (not
+#      its loopback) to be reachable: `CACTUS_HOST=0.0.0.0
+#      build/cactus.sh start` (see build/cactus.sh).
+#   3. no daemon: podman needs no Docker Desktop; run `podman-compose`
+#      (or `docker compose` against a podman socket via
+#      DOCKER_HOST=unix:///run/user/$UID/podman/podman.sock). The
+#      healthcheck-gated depends_on in the base compose drives the
+#      startup order on both engines.
+#
+# Everything NOT overridden must stay in the base compose.yaml — this
+# file carries only the podman-specific deltas, so both engines read
+# one canonical stack definition.
+services:
+  gamemaster:
+    environment:
+      # the GM persona + interpreter stages on the host (the podman
+      # equivalent of docker's host.docker.internal)
+      - HARNESS_BASE_URL=http://host.containers.internal:1234/v1
+      - HARNESS_INTERPRETER_BASE_URL=http://host.containers.internal:1243/v1
+    extra_hosts:
+      # gateway DNS entries (podman honors `host-gateway`; no-op under
+      # docker where host.docker.internal is already built in)
+      - "host.docker.internal:host-gateway"
+      - "host.containers.internal:host-gateway"
+    restart: unless-stopped

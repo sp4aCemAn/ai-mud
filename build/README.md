@@ -24,8 +24,11 @@ HMAC host (your Mac)
 
 | Script | What it does |
 |---|---|
-| `build/install.sh` | Installs the HOST dependencies via Homebrew: cactus (the GM engine), expect (SSH UX smokes), golangci-lint (lint CI parity), docker (skipped when present). Go + module deps ride the Dockerfiles/dev flow, not brew. |
-| `build/cactus.sh` | `start / stop / status / models / ping` for the GM engine (`cactus serve google/gemma-4-E2B-it --no-cloud-handoff --port 1243`). The pid-file lives at `~/.cactus-serve.pid`, log at `~/.cactus-serve.log`. Cloud handoff is **pinned OFF** (deterministic local GM — the harness's no-op ladder is the fallback, never a cloud route). |
+| Script | What it does |
+|---|---|
+| `build/install.sh` | Installs the HOST dependencies via Homebrew: cactus (the GM engine), expect (SSH UX smokes), golangci-lint (lint CI parity), docker (skipped when present). Go + module deps ride the Dockerfiles/dev flow, not brew. (Linux: cactus comes from source — see the quickstart link inside.) |
+| `build/compose.podman.yaml` | **Podman override** — layer it on the base compose (`podman-compose -f compose.yaml -f compose.podman.yaml up -d --build gamemaster`, or docker with `:-f` too). Carries ONLY the podman deltas: env re-pointed to `host.containers.internal`, `extra_hosts` gateway entries, and the note that cactus must bind `0.0.0.0` on Linux. Docker merges it harmlessly for testing. |
+| `build/cactus.sh` | `start / stop / status / models / ping / log` for the GM engine (`cactus serve google/gemma-4-E2B-it --no-cloud-handoff --port 1243`). Portable macOS + Linux: finds the binary (brew paths or PATH), the pid-file lives at `~/.cactus-serve.pid`, log at `~/.cactus-serve.log` (`log [n]` tails it). **On Linux + podman raise it with `CACTUS_HOST=0.0.0.0`** — rootless podman's bridge reaches the host's gateway IP, not its loopback. Cloud handoff is **pinned OFF**; `stop` even catches untracked instances (bare nohup / brew services) by name. |
 | `build/deploy.sh` | Rebuilds + deploys the stack. **The compose-cache gotcha**: it runs a real `compose build` FIRST, compares the running image stamp to the just-built one and force-recreates on mismatch (plain `up -d --build` silently reused an old image once). Waits for `/healthz`, tells you whether cactus is up. |
 | `build/dev.sh` | The TESTMAP verification stack, scriptified: gofmt (dirty files = format in place), vet, build, `go test ./... -count=1`, then — when the containers are live — `STORAGE_INTEGRATION` + the deployed-contract smoke suite (`GAME_SMOKE_LIVE_ONLY=1`). Green across the board or it stops. |
 
@@ -37,12 +40,26 @@ build/cactus.sh start            # the GM engine boots + downloads the model onc
 build/cactus.sh ping             # "ok" — the engine talks
 build/deploy.sh                  # the stack builds + boots; /healthz answers
 # play:
-ssh -p 2525 localhost            # (or any key — auto-mints an account)
+ssh localhost -p 2525            # (or any key — auto-mints an account)
 curl http://127.0.0.1:8081/api/world   # the ops readback
 
 # the verification loop (after every change):
 build/dev.sh                     # fmt, vet, unit tests, (+integration when containers up)
 ```
+
+**Linux / podman instead of Docker Desktop:**
+
+```sh
+# 1) the engine smiles at the bridge, not its loopback:
+CACTUS_HOST=0.0.0.0 build/cactus.sh start
+# 2) the stack layers the podman override (env re-pointing + gateway DNS):
+cd build
+podman-compose -f compose.yaml -f compose.podman.yaml up -d --build
+#    (or docker/podman via socket: DOCKER_HOST=unix:///run/user/$UID/podman/podman.sock
+#     docker compose -f compose.yaml -f compose.podman.yaml up -d --build)
+```
+
+> `deploy.sh`/`dev.sh` shell out to `docker compose -f compose.yaml`; on podman either swap the engine by exporting `DOCKER_HOST` to the podman socket, or invoke the two `-f`-layered forms by hand (the override makes both engines read the same stack).
 
 ## Day-to-day
 
